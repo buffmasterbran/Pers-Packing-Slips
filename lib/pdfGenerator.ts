@@ -197,12 +197,20 @@ async function drawHeader(doc: jsPDF, order: ProcessedOrder, x: number, y: numbe
       currentY += 0.15;
       
       // Load and optimize custom artwork image (scale for narrow layout)
-      const artworkDataUrl = await loadImageAsDataUrl(order.customArtworkUrl, isNarrow ? 200 : 400, isNarrow ? 200 : 400);
-      if (artworkDataUrl) {
-        const imgWidth = isNarrow ? 0.85 : 1.7;
-        const imgHeight = isNarrow ? 0.65 : 1.3;
-        const format = artworkDataUrl.startsWith('data:image/png') ? 'PNG' : 'JPEG';
-        doc.addImage(artworkDataUrl, format, x + col1Width + (col2Width - imgWidth) / 2, currentY, imgWidth, imgHeight);
+      const artworkData = await loadImageAsDataUrl(order.customArtworkUrl, isNarrow ? 200 : 400, isNarrow ? 200 : 400);
+      if (artworkData) {
+        const maxWidth = isNarrow ? 0.85 : 1.7;
+        const maxHeight = isNarrow ? 0.65 : 1.3;
+        // Calculate aspect ratio preserving dimensions
+        const aspectRatio = artworkData.width / artworkData.height;
+        let imgWidth = maxWidth;
+        let imgHeight = maxWidth / aspectRatio;
+        if (imgHeight > maxHeight) {
+          imgHeight = maxHeight;
+          imgWidth = maxHeight * aspectRatio;
+        }
+        const format = artworkData.dataUrl.startsWith('data:image/png') ? 'PNG' : 'JPEG';
+        doc.addImage(artworkData.dataUrl, format, x + col1Width + (col2Width - imgWidth) / 2, currentY, imgWidth, imgHeight);
         maxY = Math.max(maxY, currentY + imgHeight);
       }
     } catch (error) {
@@ -276,13 +284,20 @@ function optimizeImageUrl(url: string, maxWidth: number = 300, maxHeight: number
 }
 
 /**
- * Load an image from URL and convert to data URL
+ * Load an image from URL and convert to data URL, returning both the data URL and dimensions
  */
-async function loadImageAsDataUrl(url: string, maxWidth: number = 300, maxHeight: number = 300): Promise<string | null> {
+async function loadImageAsDataUrl(url: string, maxWidth: number = 300, maxHeight: number = 300): Promise<{ dataUrl: string; width: number; height: number } | null> {
   try {
-    // If it's already a data URL, return it
+    // If it's already a data URL, load it to get dimensions
     if (url.startsWith('data:')) {
-      return url;
+      return new Promise((resolve, reject) => {
+        const img = new Image();
+        img.onload = () => {
+          resolve({ dataUrl: url, width: img.width, height: img.height });
+        };
+        img.onerror = reject;
+        img.src = url;
+      });
     }
 
     // Optimize imgix URLs with resize/compress parameters
@@ -296,10 +311,18 @@ async function loadImageAsDataUrl(url: string, maxWidth: number = 300, maxHeight
 
     const blob = await response.blob();
     
-    // Convert blob to data URL
+    // Convert blob to data URL and get dimensions
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
-      reader.onloadend = () => resolve(reader.result as string);
+      reader.onloadend = () => {
+        const dataUrl = reader.result as string;
+        const img = new Image();
+        img.onload = () => {
+          resolve({ dataUrl, width: img.width, height: img.height });
+        };
+        img.onerror = reject;
+        img.src = dataUrl;
+      };
       reader.onerror = reject;
       reader.readAsDataURL(blob);
     });
@@ -325,7 +348,7 @@ async function generateBarcodeAsync(value: string): Promise<string | null> {
     JsBarcode(canvas, value, {
       format: 'CODE128',
       width: 2,
-      height: 30,
+      height: 40,
       displayValue: true,
       fontSize: 12,
     });
@@ -420,17 +443,25 @@ async function drawItemsTable(
     // Image column (if available) - center vertically in row
     if (item.imageUrl) {
       try {
-        // Load and optimize item image (smaller size for table)
-        const imgDataUrl = await loadImageAsDataUrl(item.imageUrl, isNarrow ? 100 : 200, isNarrow ? 100 : 200);
-        if (imgDataUrl) {
-          const imgWidth = isNarrow ? 0.2 : 0.4;
-          const imgHeight = isNarrow ? 0.15 : 0.3;
+        // Load and optimize item image (larger size to use available space)
+        const imgData = await loadImageAsDataUrl(item.imageUrl, isNarrow ? 150 : 300, isNarrow ? 150 : 300);
+        if (imgData) {
+          const maxWidth = isNarrow ? 0.3 : 0.5;
+          const maxHeight = isNarrow ? 0.25 : 0.45;
+          // Calculate aspect ratio preserving dimensions
+          const aspectRatio = imgData.width / imgData.height;
+          let imgWidth = maxWidth;
+          let imgHeight = maxWidth / aspectRatio;
+          if (imgHeight > maxHeight) {
+            imgHeight = maxHeight;
+            imgWidth = maxHeight * aspectRatio;
+          }
           const imgY = rowStartY + (rowHeight - imgHeight) / 2; // Center vertically
           // Determine image format from data URL or URL extension
-          const format = imgDataUrl.startsWith('data:image/png') ? 'PNG' : 
-                        imgDataUrl.startsWith('data:image/jpeg') ? 'JPEG' :
+          const format = imgData.dataUrl.startsWith('data:image/png') ? 'PNG' : 
+                        imgData.dataUrl.startsWith('data:image/jpeg') ? 'JPEG' :
                         item.imageUrl.toLowerCase().includes('.png') ? 'PNG' : 'JPEG';
-          doc.addImage(imgDataUrl, format, xPos + 0.05, imgY, imgWidth, imgHeight);
+          doc.addImage(imgData.dataUrl, format, xPos + 0.05, imgY, imgWidth, imgHeight);
         }
       } catch (error) {
         console.warn('Failed to load image:', item.imageUrl, error);
@@ -456,7 +487,7 @@ async function drawItemsTable(
         const barcodeDataUrl = await generateBarcodeAsync(item.barcode);
         if (barcodeDataUrl) {
           const barcodeWidth = isNarrow ? 0.75 : 1.5;
-          const barcodeHeight = isNarrow ? 0.15 : 0.3;
+          const barcodeHeight = isNarrow ? 0.2 : 0.4;
           const barcodeX = xPos + (colWidths[2] - barcodeWidth) / 2; // Center horizontally
           const barcodeY = rowStartY + (rowHeight - barcodeHeight) / 2; // Center vertically
           doc.addImage(barcodeDataUrl, 'PNG', barcodeX, barcodeY, barcodeWidth, barcodeHeight);
@@ -518,7 +549,7 @@ async function drawFooter(doc: jsPDF, order: ProcessedOrder, x: number, y: numbe
       const barcodeDataUrl = await generateBarcodeAsync(barcodeValue);
       if (barcodeDataUrl) {
         const barcodeWidth = isNarrow ? 0.75 : 1.5;
-        const barcodeHeight = isNarrow ? 0.15 : 0.3;
+        const barcodeHeight = isNarrow ? 0.2 : 0.4;
         doc.addImage(barcodeDataUrl, 'PNG', x, y - 0.25, barcodeWidth, barcodeHeight);
       }
     } catch (error) {
