@@ -14,14 +14,15 @@ export default function Home() {
   const [error, setError] = useState<string | null>(null);
   
   // Filters
-  const [personalizedFilter, setPersonalizedFilter] = useState<boolean | null>(null);
+  const [personalizedFilter, setPersonalizedFilter] = useState<boolean | null>(true); // Default to Personalized
   const [selectedCupSizes, setSelectedCupSizes] = useState<string[]>([]);
   const [selectedBoxSize, setSelectedBoxSize] = useState<string | null>(null);
   const [dateFrom, setDateFrom] = useState<string>('');
   const [dateTo, setDateTo] = useState<string>('');
-  const [printedFilter, setPrintedFilter] = useState<boolean | null>(null);
+  const [printedFilter, setPrintedFilter] = useState<boolean | null>(false); // Default to Not Printed
   const [selectedOrder, setSelectedOrder] = useState<ProcessedOrder | null>(null);
   const [selectedOrderIds, setSelectedOrderIds] = useState<Set<string>>(new Set());
+  const [showClearHint, setShowClearHint] = useState(false);
 
   // Load data on mount
   useEffect(() => {
@@ -351,8 +352,17 @@ export default function Home() {
 
             {/* Printed Filter */}
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
+              <label className="block text-sm font-medium text-gray-700 mb-2 flex items-center gap-2">
                 Packing Slip Status
+                <button
+                  onClick={() => setShowClearHint(true)}
+                  className="text-blue-500 hover:text-blue-700"
+                  title="How to clear printed status"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M9.879 7.519c1.171-1.025 3.071-1.025 4.242 0 1.172 1.025 1.172 2.687 0 3.712-.203.179-.43.326-.67.442-.745.361-1.45.999-1.45 1.827v.75M21 12a9 9 0 11-18 0 9 9 0 0118 0zm-9 5.25h.008v.008H12v-.008z" />
+                  </svg>
+                </button>
               </label>
               <div className="flex gap-2">
                 <button
@@ -723,11 +733,70 @@ export default function Home() {
                   Close
                 </button>
               </div>
+              </div>
             </div>
-          </div>
-        )}
+          )}
+
+          {/* Clear Printed Status Hint Modal */}
+          {showClearHint && (
+            <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+              <div className="bg-white rounded-lg shadow-xl max-w-md w-full mx-4">
+                <div className="p-6">
+                  <div className="flex justify-between items-center mb-4">
+                    <h3 className="text-lg font-semibold text-gray-900">Clear Printed Status</h3>
+                    <button
+                      onClick={() => setShowClearHint(false)}
+                      className="text-gray-400 hover:text-gray-600"
+                    >
+                      <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-6 h-6">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                      </svg>
+                    </button>
+                  </div>
+                  
+                  <div className="space-y-4">
+                    <p className="text-sm text-gray-600">
+                      To clear all printed statuses, open your browser's developer console (F12) and run:
+                    </p>
+                    
+                    <div className="bg-gray-100 rounded-lg p-4 flex items-center justify-between">
+                      <code className="text-sm font-mono text-gray-800">window.clearAllPrintedOrders()</code>
+                      <button
+                        onClick={() => {
+                          navigator.clipboard.writeText('window.clearAllPrintedOrders()');
+                          alert('Command copied to clipboard!');
+                        }}
+                        className="ml-4 px-3 py-1 bg-blue-600 text-white text-sm rounded hover:bg-blue-700"
+                      >
+                        Copy
+                      </button>
+                    </div>
+                    
+                    <div className="text-xs text-gray-500 space-y-1">
+                      <p><strong>Steps:</strong></p>
+                      <ol className="list-decimal list-inside space-y-1 ml-2">
+                        <li>Press F12 to open Developer Tools</li>
+                        <li>Click on the "Console" tab</li>
+                        <li>Paste or type: <code className="bg-gray-200 px-1 rounded">window.clearAllPrintedOrders()</code></li>
+                        <li>Press Enter</li>
+                      </ol>
+                    </div>
+                  </div>
+                  
+                  <div className="mt-6 flex justify-end">
+                    <button
+                      onClick={() => setShowClearHint(false)}
+                      className="px-4 py-2 bg-gray-200 text-gray-700 rounded hover:bg-gray-300"
+                    >
+                      Close
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
       </div>
-    </div>
-  );
-}
+    );
+  }
 
