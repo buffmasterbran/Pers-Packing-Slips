@@ -1,6 +1,6 @@
 import { jsPDF } from 'jspdf';
 import JsBarcode from 'jsbarcode';
-import { ProcessedOrder } from './types';
+import { ProcessedOrder, OrderItem } from './types';
 
 /**
  * Generate a multi-page PDF with packing slips for the given orders
@@ -531,4 +531,182 @@ async function drawFooter(doc: jsPDF, order: ProcessedOrder, x: number, y: numbe
     const pageInfo = doc.getCurrentPageInfo();
     doc.text(`Page ${pageInfo.pageNumber} of ${pageInfo.pages}`, x + width, y, { align: 'right' });
   }
+}
+
+/**
+ * Generate a picklist PDF grouped by pick location (BIN)
+ */
+export async function generatePicklistPDF(orders: ProcessedOrder[]): Promise<void> {
+  if (!orders || orders.length === 0) {
+    throw new Error('No orders provided');
+  }
+
+  // Collect all items with their pick locations and order info
+  interface PicklistItem {
+    sku: string;
+    description?: string;
+    color?: string;
+    pickLocation: string;
+    totalQuantity: number;
+    orders: Array<{ orderNumber: string; quantity: number }>;
+  }
+
+  // Use a composite key: location + SKU to handle same SKU in different locations
+  const itemsByLocation = new Map<string, PicklistItem>();
+
+  // Process all orders and aggregate items by pick location and SKU
+  for (const order of orders) {
+    for (const item of order.items) {
+      const location = item.pickLocation || '-';
+      const key = `${location}|${item.sku}`; // Composite key
+      
+      if (!itemsByLocation.has(key)) {
+        itemsByLocation.set(key, {
+          sku: item.sku,
+          description: item.description,
+          color: item.color,
+          pickLocation: location,
+          totalQuantity: 0,
+          orders: [],
+        });
+      }
+
+      const picklistItem = itemsByLocation.get(key)!;
+      picklistItem.totalQuantity += item.quantity;
+      
+      // Check if this order already has this item
+      const existingOrder = picklistItem.orders.find(o => o.orderNumber === order.orderNumber);
+      if (existingOrder) {
+        existingOrder.quantity += item.quantity;
+      } else {
+        picklistItem.orders.push({
+          orderNumber: order.orderNumber,
+          quantity: item.quantity,
+        });
+      }
+    }
+  }
+
+  // Sort by location then SKU (- goes last)
+  const sortedKeys = Array.from(itemsByLocation.keys()).sort((a, b) => {
+    const [locationA, skuA] = a.split('|');
+    const [locationB, skuB] = b.split('|');
+    
+    if (locationA === '-' && locationB !== '-') return 1;
+    if (locationB === '-' && locationA !== '-') return -1;
+    
+    const locationCompare = locationA.localeCompare(locationB);
+    if (locationCompare !== 0) return locationCompare;
+    
+    return skuA.localeCompare(skuB);
+  });
+
+  const doc = new jsPDF({
+    orientation: 'portrait',
+    unit: 'in',
+    format: 'letter',
+  });
+
+  const pageWidth = 8.5;
+  const pageHeight = 11;
+  const margin = 0.5;
+  const contentWidth = pageWidth - (margin * 2);
+  let currentY = margin;
+
+  // Header
+  doc.setFontSize(20);
+  doc.setFont('helvetica', 'bold');
+  doc.text('PICKLIST', margin, currentY);
+  currentY += 0.3;
+
+  doc.setFontSize(10);
+  doc.setFont('helvetica', 'normal');
+  doc.text(`Generated: ${new Date().toLocaleDateString()} ${new Date().toLocaleTimeString()}`, margin, currentY);
+  currentY += 0.2;
+  doc.text(`Total Orders: ${orders.length}`, margin, currentY);
+  currentY += 0.3;
+
+  // Draw header line
+  doc.setLineWidth(0.01);
+  doc.line(margin, currentY, margin + contentWidth, currentY);
+  currentY += 0.2;
+
+  // Table headers
+  doc.setFontSize(9);
+  doc.setFont('helvetica', 'bold');
+  const colWidths = [0.8, 3.5, 1.5, 2.2]; // Location, SKU, Qty, Color
+  const headers = ['LOCATION', 'ITEM', 'QTY', 'COLOR'];
+  
+  let xPos = margin;
+  for (let i = 0; i < headers.length; i++) {
+    doc.text(headers[i], xPos + colWidths[i] / 2, currentY, { align: 'center' });
+    xPos += colWidths[i];
+  }
+  
+  currentY += 0.15;
+  doc.setLineWidth(0.01);
+  doc.line(margin, currentY, margin + contentWidth, currentY);
+  currentY += 0.15;
+
+  // Items grouped by location
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(8);
+
+  for (const key of sortedKeys) {
+    const item = itemsByLocation.get(key)!;
+    const location = item.pickLocation;
+    
+    // Check if we need a new page
+    if (currentY > pageHeight - margin - 0.8) {
+      doc.addPage();
+      currentY = margin;
+      
+      // Redraw headers
+      xPos = margin;
+      doc.setFont('helvetica', 'bold');
+      for (let i = 0; i < headers.length; i++) {
+        doc.text(headers[i], xPos + colWidths[i] / 2, currentY, { align: 'center' });
+        xPos += colWidths[i];
+      }
+      currentY += 0.15;
+      doc.setLineWidth(0.01);
+      doc.line(margin, currentY, margin + contentWidth, currentY);
+      currentY += 0.15;
+      doc.setFont('helvetica', 'normal');
+    }
+
+    const rowStartY = currentY;
+    xPos = margin;
+
+    // Location
+    doc.setFont('helvetica', 'bold');
+    doc.text(location, xPos + colWidths[0] / 2, rowStartY + 0.1, { align: 'center' });
+    xPos += colWidths[0];
+
+    // SKU only (no description)
+    doc.setFont('helvetica', 'bold');
+    doc.text(item.sku, xPos, rowStartY + 0.1);
+    xPos += colWidths[1];
+
+    // Quantity
+    doc.setFont('helvetica', 'bold');
+    doc.text(item.totalQuantity.toString(), xPos + colWidths[2] / 2, rowStartY + 0.1, { align: 'center' });
+    xPos += colWidths[2];
+
+    // Color
+    doc.setFont('helvetica', 'normal');
+    doc.text(item.color || '', xPos + colWidths[3] / 2, rowStartY + 0.1, { align: 'center', maxWidth: colWidths[3] - 0.1 });
+    xPos += colWidths[3];
+
+    currentY = rowStartY + 0.2;
+    
+    // Draw row separator
+    doc.setLineWidth(0.005);
+    doc.line(margin, currentY, margin + contentWidth, currentY);
+    currentY += 0.1;
+  }
+
+  // Save the PDF
+  const filename = `picklist-${new Date().toISOString().split('T')[0]}.pdf`;
+  doc.save(filename);
 }

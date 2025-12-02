@@ -4,7 +4,7 @@ import { useState, useEffect, useMemo } from 'react';
 import { NetSuiteItem, ProcessedOrder, OrderConfig } from '@/lib/types';
 import { processOrders, filterOrders } from '@/lib/dataProcessing';
 import { getPrintedOrders, markOrdersAsPrinted, clearPrintedOrders } from '@/lib/storage';
-import { generatePackingSlipsPDF } from '@/lib/pdfGenerator';
+import { generatePackingSlipsPDF, generatePicklistPDF } from '@/lib/pdfGenerator';
 import orderConfig from '../order-config.json';
 
 export default function Home() {
@@ -122,6 +122,20 @@ export default function Home() {
     } catch (error) {
       console.error('Error generating PDF:', error);
       alert('Error generating PDF. Please try again.');
+    }
+  };
+
+  const handleGeneratePicklist = async () => {
+    if (filteredOrders.length === 0) {
+      alert('No orders selected for picklist');
+      return;
+    }
+
+    try {
+      await generatePicklistPDF(filteredOrders);
+    } catch (error) {
+      console.error('Error generating picklist:', error);
+      alert('Error generating picklist. Please try again.');
     }
   };
 
@@ -341,13 +355,22 @@ export default function Home() {
               {filteredOrders.length} order{filteredOrders.length !== 1 ? 's' : ''} found
             </span>
           </div>
-          <button
-            onClick={handlePrintPackingSlips}
-            disabled={filteredOrders.length === 0}
-            className="px-6 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 disabled:bg-gray-400 disabled:cursor-not-allowed"
-          >
-            Print Packing Slips ({filteredOrders.length})
-          </button>
+          <div className="flex gap-3">
+            <button
+              onClick={handleGeneratePicklist}
+              disabled={filteredOrders.length === 0}
+              className="px-6 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed"
+            >
+              Generate Picklist ({filteredOrders.length})
+            </button>
+            <button
+              onClick={handlePrintPackingSlips}
+              disabled={filteredOrders.length === 0}
+              className="px-6 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 disabled:bg-gray-400 disabled:cursor-not-allowed"
+            >
+              Print Packing Slips ({filteredOrders.length})
+            </button>
+          </div>
         </div>
 
         {/* Orders Table */}

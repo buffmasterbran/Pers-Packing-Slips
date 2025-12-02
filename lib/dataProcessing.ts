@@ -289,28 +289,34 @@ export function filterOrders(
       }
     }
 
-    // Date filter
+    // Date filter - inclusive range (orders on dateFrom and dateTo should be included)
     if (filters.dateFrom || filters.dateTo) {
       const orderDate = parseDate(order.datecreated);
       if (!orderDate) return false;
       
-      // Normalize order date to start of day for comparison (ignore time)
-      const orderDateOnly = new Date(orderDate.getFullYear(), orderDate.getMonth(), orderDate.getDate());
+      // Normalize all dates to start of day (00:00:00) for comparison
+      // This ensures we're comparing just the date part, not the time
+      const normalizeDate = (date: Date): Date => {
+        const normalized = new Date(date);
+        normalized.setHours(0, 0, 0, 0);
+        normalized.setMilliseconds(0);
+        return normalized;
+      };
+      
+      const orderDateOnly = normalizeDate(orderDate);
       
       if (filters.dateFrom) {
-        // Set dateFrom to start of day (00:00:00) in local time
-        const dateFromStart = new Date(filters.dateFrom);
-        dateFromStart.setHours(0, 0, 0, 0);
-        const dateFromOnly = new Date(dateFromStart.getFullYear(), dateFromStart.getMonth(), dateFromStart.getDate());
+        const dateFromOnly = normalizeDate(filters.dateFrom);
+        // Include orders on or after dateFrom (>=)
+        // Using < means exclude if order is BEFORE dateFrom, which is correct
         if (orderDateOnly < dateFromOnly) {
           return false;
         }
       }
       if (filters.dateTo) {
-        // Set dateTo to end of day, but compare using date only
-        const dateToEnd = new Date(filters.dateTo);
-        dateToEnd.setHours(23, 59, 59, 999);
-        const dateToOnly = new Date(dateToEnd.getFullYear(), dateToEnd.getMonth(), dateToEnd.getDate());
+        const dateToOnly = normalizeDate(filters.dateTo);
+        // Include orders on or before dateTo (<=)
+        // Using > means exclude if order is AFTER dateTo, which is correct
         if (orderDateOnly > dateToOnly) {
           return false;
         }
