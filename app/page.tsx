@@ -21,6 +21,7 @@ export default function Home() {
   const [dateTo, setDateTo] = useState<string>('');
   const [printedFilter, setPrintedFilter] = useState<boolean | null>(null);
   const [selectedOrder, setSelectedOrder] = useState<ProcessedOrder | null>(null);
+  const [selectedOrderIds, setSelectedOrderIds] = useState<Set<string>>(new Set());
 
   // Load data on mount
   useEffect(() => {
@@ -71,6 +72,11 @@ export default function Home() {
     });
   }, [allOrders, personalizedFilter, selectedCupSizes, selectedBoxSize, dateFrom, dateTo, printedFilter, printedOrders]);
 
+  // Clear selected orders when filters change (to avoid selecting orders that are no longer visible)
+  useEffect(() => {
+    setSelectedOrderIds(new Set());
+  }, [personalizedFilter, selectedCupSizes, selectedBoxSize, dateFrom, dateTo, printedFilter]);
+
   // Handle cup size toggle
   const toggleCupSize = (size: string) => {
     if (size === 'all') {
@@ -102,17 +108,51 @@ export default function Home() {
     };
   }, []);
 
+  // Get selected orders from filtered orders
+  const selectedOrders = useMemo(() => {
+    return filteredOrders.filter(order => selectedOrderIds.has(order.tranid));
+  }, [filteredOrders, selectedOrderIds]);
+
+  const handleToggleOrder = (tranid: string) => {
+    setSelectedOrderIds(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(tranid)) {
+        newSet.delete(tranid);
+      } else {
+        newSet.add(tranid);
+      }
+      return newSet;
+    });
+  };
+
+  const handleSelectAll = () => {
+    if (selectedOrderIds.size === filteredOrders.length) {
+      // Deselect all
+      setSelectedOrderIds(new Set());
+    } else {
+      // Select all filtered orders
+      setSelectedOrderIds(new Set(filteredOrders.map(o => o.tranid)));
+    }
+  };
+
+  const handleSelectFirst = (count: number) => {
+    const firstNOrders = filteredOrders.slice(0, count);
+    setSelectedOrderIds(new Set(firstNOrders.map(o => o.tranid)));
+  };
+
   const handlePrintPackingSlips = async () => {
-    if (filteredOrders.length === 0) {
+    const ordersToPrint = selectedOrders.length > 0 ? selectedOrders : filteredOrders;
+    
+    if (ordersToPrint.length === 0) {
       alert('No orders selected to print');
       return;
     }
 
     try {
-      await generatePackingSlipsPDF(filteredOrders);
+      await generatePackingSlipsPDF(ordersToPrint);
       
       // Mark orders as printed
-      const tranids = filteredOrders.map(o => o.tranid);
+      const tranids = ordersToPrint.map(o => o.tranid);
       markOrdersAsPrinted(tranids);
       setPrintedOrders(prev => {
         const newSet = new Set(prev);
@@ -126,13 +166,15 @@ export default function Home() {
   };
 
   const handleGeneratePicklist = async () => {
-    if (filteredOrders.length === 0) {
+    const ordersToPrint = selectedOrders.length > 0 ? selectedOrders : filteredOrders;
+    
+    if (ordersToPrint.length === 0) {
       alert('No orders selected for picklist');
       return;
     }
 
     try {
-      await generatePicklistPDF(filteredOrders);
+      await generatePicklistPDF(ordersToPrint);
     } catch (error) {
       console.error('Error generating picklist:', error);
       alert('Error generating picklist. Please try again.');
@@ -350,10 +392,32 @@ export default function Home() {
 
         {/* Results Summary and Print Button */}
         <div className="bg-white rounded-lg shadow-md p-4 mb-6 flex justify-between items-center">
-          <div>
+          <div className="flex items-center gap-4">
             <span className="text-lg font-semibold">
               {filteredOrders.length} order{filteredOrders.length !== 1 ? 's' : ''} found
             </span>
+            {filteredOrders.length > 0 && (
+              <div className="flex gap-2">
+                <button
+                  onClick={() => handleSelectFirst(10)}
+                  className="px-3 py-1 text-sm bg-gray-100 text-gray-700 rounded hover:bg-gray-200 border border-gray-300"
+                >
+                  Select First 10
+                </button>
+                <button
+                  onClick={() => handleSelectFirst(20)}
+                  className="px-3 py-1 text-sm bg-gray-100 text-gray-700 rounded hover:bg-gray-200 border border-gray-300"
+                >
+                  Select First 20
+                </button>
+                <button
+                  onClick={() => handleSelectFirst(30)}
+                  className="px-3 py-1 text-sm bg-gray-100 text-gray-700 rounded hover:bg-gray-200 border border-gray-300"
+                >
+                  Select First 30
+                </button>
+              </div>
+            )}
           </div>
           <div className="flex gap-3">
             <button
@@ -361,14 +425,14 @@ export default function Home() {
               disabled={filteredOrders.length === 0}
               className="px-6 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed"
             >
-              Generate Picklist ({filteredOrders.length})
+              Generate Picklist ({selectedOrders.length > 0 ? selectedOrders.length : filteredOrders.length})
             </button>
             <button
               onClick={handlePrintPackingSlips}
               disabled={filteredOrders.length === 0}
               className="px-6 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 disabled:bg-gray-400 disabled:cursor-not-allowed"
             >
-              Print Packing Slips ({filteredOrders.length})
+              Print Packing Slips ({selectedOrders.length > 0 ? selectedOrders.length : filteredOrders.length})
             </button>
           </div>
         </div>
@@ -379,6 +443,14 @@ export default function Home() {
             <table className="min-w-full divide-y divide-gray-200">
               <thead className="bg-gray-50">
                 <tr>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    <input
+                      type="checkbox"
+                      checked={filteredOrders.length > 0 && selectedOrderIds.size === filteredOrders.length}
+                      onChange={handleSelectAll}
+                      className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                    />
+                  </th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                     Order #
                   </th>
@@ -411,6 +483,14 @@ export default function Home() {
               <tbody className="bg-white divide-y divide-gray-200">
                 {filteredOrders.map((order) => (
                   <tr key={order.tranid} className="hover:bg-gray-50">
+                    <td className="px-4 py-4 whitespace-nowrap">
+                      <input
+                        type="checkbox"
+                        checked={selectedOrderIds.has(order.tranid)}
+                        onChange={() => handleToggleOrder(order.tranid)}
+                        className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                      />
+                    </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
                       {order.orderNumber}
                     </td>
