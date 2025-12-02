@@ -1,0 +1,83 @@
+GET https://7913744.restlets.api.netsuite.com/app/site/hosting/restlet.nl?script=2796&deploy=1: {
+    "Network": {
+      "addresses": {
+        "local": {
+          "address": "172.17.0.2",
+          "family": "IPv4",
+          "port": 44790
+        },
+        "remote": {
+          "address": "23.12.145.147",
+          "family": "IPv4",
+          "port": 443
+        }
+      },
+      "tls": {
+        "reused": false,
+        "authorized": true,
+        "authorizationError": null,
+        "cipher": {
+          "name": "TLS_AES_256_GCM_SHA384",
+          "standardName": "TLS_AES_256_GCM_SHA384",
+          "version": "TLSv1.3"
+        },
+        "protocol": "TLSv1.3",
+        "ephemeralKeyInfo": {
+          "type": "ECDH",
+          "name": "X25519",
+          "size": 253
+        },
+        "peerCertificate": {
+          "subject": {
+            "country": "US",
+            "stateOrProvince": "California",
+            "locality": "Redwood City",
+            "organization": "Oracle Corporation",
+            "commonName": "extforms.netsuite.com",
+            "alternativeNames": "DNS:extforms.netsuite.com, DNS:*.extforms.netsuite.com, DNS:*.restlets.api.netsuite.com, DNS:*.suitetalk.api.netsuite.com"
+          },
+          "issuer": {
+            "country": "US",
+            "organization": "DigiCert Inc",
+            "commonName": "DigiCert Global G3 TLS ECC SHA384 2020 CA1"
+          },
+          "validFrom": "Aug 26 00:00:00 2025 GMT",
+          "validTo": "Aug 27 23:59:59 2026 GMT",
+          "fingerprint": "D7:FD:4F:7C:22:27:AB:88:18:77:95:1C:AB:36:42:55:6F:22:74:87",
+          "serialNumber": "08D64677A3093736D5B20945D13A983B"
+        }
+      }
+    },
+    "Request Headers": {
+      "content-type": "application/json",
+      "authorization": "OAuth realm=\"7913744\",oauth_consumer_key=\"e05657cf2d8c89d5e819f7031df0c49f49298ee6b9f710fb027a0f9da126176d\",oauth_token=\"136aee4a2af579e53ec6a8f24af5b85fbad2776d0d99847fa4101b7b33cd8882\",oauth_signature_method=\"HMAC-SHA256\",oauth_timestamp=\"1764643466\",oauth_nonce=\"oNwSxZCPB7a\",oauth_version=\"1.0\",oauth_signature=\"yXVLinX5WsEh2GWBnCTd0C2WPg%2By36HxOfy%2B3vbq6GI%3D\"",
+      "user-agent": "PostmanRuntime/7.50.0",
+      "accept": "*/*",
+      "cache-control": "no-cache",
+      "postman-token": "f99e570e-f64e-4a05-8acf-7ca767f0fc19",
+      "host": "7913744.restlets.api.netsuite.com",
+      "accept-encoding": "gzip, deflate, br",
+      "connection": "keep-alive",
+      "cookie": "_abck=B7356AB91A9635E49A5B77F02891EB08~-1~YAAQE0IkF8T5N4SXAQAA8v5mxg6nmQw56/OMAbBJoAyK+bqypY7e8kQt4EH4Hu6+I7dS5Pf9g/fBjQEcKoPShFeEcj4D2XRtr+gE73f2K9gh9/VJq6Bt8pYts5W2/TukNnsm4Z66VJmMtojj1ftocvZYzcnsV5yqpjRIBi3vN8QaIArko0z+MDHyVtEvaUjxeZzz/7rtOqa2rZDvBnSj1JBgt7AaBdOxPe7N8a01cLMhTP6VmdVn9k2TIl49+jixmskD6tymS8iiyxU8P3VfqfKLUShdhPGqoMMOa7oEG9bOk3E1SuFhJUxkSYMNz+Qumsbs1XHwBKNClAJFaqRia5XRB/gmO6jXxriE16OcXIS7NxB20xOaJmCGRZ5g0iPvJXL7KxGqIkr6V/bj33nF1T5tpg/3PKeyILP7+hKG/Cd2EMxx3N7kGHJoTGFnWuas379i~-1~-1~-1"
+    },
+    "Response Headers": {
+      "content-type": "application/json;charset=utf-8",
+      "x-n-operationid": "38ec3da2-ed17-4c67-b090-4c8b775bdedd",
+      "strict-transport-security": "max-age=31536000",
+      "x-content-type-options": "nosniff",
+      "vary": [
+        "User-Agent",
+        "Accept-Encoding"
+      ],
+      "content-encoding": "gzip",
+      "date": "Tue, 02 Dec 2025 02:44:43 GMT",
+      "transfer-encoding": "chunked",
+      "connection": [
+        "keep-alive",
+        "Transfer-Encoding"
+      ],
+      "akamai-grn": "0.98112017.1764643461.60268baa",
+      "set-cookie": "ak_bmsc=C5037E51059FE0AAD48F2B52272A9FF9~000000000000000000000000000000~YAAQmBEgF6aC76aaAQAAN7Hy3B0QAiBGoldiWBJv/D7e9EQUCNj/ab4bm4vmZvbOMTeeSS6ddW0cpNU7zGZBVwWFGh6VORhVwZm+JhKG+48mc5sfbBdsRCqomewzaT7INgA/VctXO0dd9bBa/GpZxtLelTEq+2SOQ+bwpsKxnEPrW11ADQoQ/S2k/QaVtRg0wTRS6R0OX0VTzr+m+5Ef0d6/+SABK0b8GwEx4YZsaujqkCshCTZj+M+y/hO0sSCGBoZPklYqOqfTfBFatL9BcE5/Rsf9h3JjRQRODdYsOm6txkRRPqazdtB/iPtE7f8eOSg07DNnPdc+Wbv4btblsXphpoFhoKVXhvM9+whBwD3Z5unQiiTgodslcQ==; Domain=.restlets.api.netsuite.com; Path=/; Expires=Tue, 02 Dec 2025 04:44:21 GMT; Max-Age=7178; SameSite=None; Secure; HttpOnly"
+    },
+    "Response Body": "The console only shows response bodies smaller than 10 KB inline. To view the complete body, inspect it by clicking Open."
+  }
