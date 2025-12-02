@@ -23,46 +23,59 @@ export default function Home() {
   const [selectedOrder, setSelectedOrder] = useState<ProcessedOrder | null>(null);
   const [selectedOrderIds, setSelectedOrderIds] = useState<Set<string>>(new Set());
   const [showClearHint, setShowClearHint] = useState(false);
+  const [syncing, setSyncing] = useState(false);
+  
+  // Sorting
+  const [sortColumn, setSortColumn] = useState<'date' | 'cupSize' | 'orderNumber' | 'fulfillmentId' | null>(null);
+  const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');
 
-  // Load data on mount
-  useEffect(() => {
-    async function loadData() {
-      try {
+  // Load data (initial + manual sync)
+  const loadData = async () => {
+    try {
+      // Show full-screen loading only on first load
+      if (allOrders.length === 0) {
         setLoading(true);
-        setError(null);
-        
-        // Load orders from API route
-        const response = await fetch('/api/orders');
-        if (!response.ok) {
-          throw new Error('Failed to load orders');
-        }
-        
-        const sampleResponse = await response.json();
-        const items = (sampleResponse as { data: NetSuiteItem[] }).data;
-        
-        if (!items || !Array.isArray(items)) {
-          throw new Error('Invalid data format');
-        }
-        
-        const processed = processOrders(items, orderConfig as OrderConfig);
-        setAllOrders(processed);
-        
-        // Load printed orders from localStorage
-        setPrintedOrders(getPrintedOrders());
-      } catch (err) {
-        console.error('Error loading data:', err);
-        setError(err instanceof Error ? err.message : 'Failed to load data');
-      } finally {
-        setLoading(false);
+      } else {
+        setSyncing(true);
       }
+      setError(null);
+      
+      // Load orders from API route, bypassing any browser cache
+      const response = await fetch('/api/orders', { cache: 'no-store' });
+      if (!response.ok) {
+        throw new Error('Failed to load orders');
+      }
+      
+      const sampleResponse = await response.json();
+      const items = (sampleResponse as { data: NetSuiteItem[] }).data;
+      
+      if (!items || !Array.isArray(items)) {
+        throw new Error('Invalid data format');
+      }
+      
+      const processed = processOrders(items, orderConfig as OrderConfig);
+      setAllOrders(processed);
+      
+      // Load printed orders from localStorage
+      setPrintedOrders(getPrintedOrders());
+    } catch (err) {
+      console.error('Error loading data:', err);
+      setError(err instanceof Error ? err.message : 'Failed to load data');
+    } finally {
+      setLoading(false);
+      setSyncing(false);
     }
-    
+  };
+
+  // Initial load on mount
+  useEffect(() => {
     loadData();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Filter orders
   const filteredOrders = useMemo(() => {
-    return filterOrders(allOrders, {
+    let orders = filterOrders(allOrders, {
       personalized: personalizedFilter,
       cupSizes: selectedCupSizes,
       boxSize: selectedBoxSize,
@@ -71,7 +84,80 @@ export default function Home() {
       printedOnly: printedFilter,
       printedOrders,
     });
-  }, [allOrders, personalizedFilter, selectedCupSizes, selectedBoxSize, dateFrom, dateTo, printedFilter, printedOrders]);
+
+    // Apply sorting if a sort column is selected
+    if (sortColumn) {
+      orders = [...orders].sort((a, b) => {
+        let aValue: any;
+        let bValue: any;
+
+        switch (sortColumn) {
+          case 'date':
+            // Parse dates for comparison
+            const parseDate = (dateStr: string): Date | null => {
+              try {
+                // Handle MM/DD/YYYY format
+                if (dateStr.includes('/')) {
+                  const parts = dateStr.split(' ');
+                  const datePart = parts[0];
+                  const [month, day, year] = datePart.split('/').map(Number);
+                  return new Date(year, month - 1, day);
+                }
+                return new Date(dateStr);
+              } catch {
+                return null;
+              }
+            };
+            aValue = parseDate(a.datecreated);
+            bValue = parseDate(b.datecreated);
+            if (!aValue && !bValue) return 0;
+            if (!aValue) return 1;
+            if (!bValue) return -1;
+            return aValue.getTime() - bValue.getTime();
+          
+          case 'cupSize':
+            // Sort by cup sizes (join and compare alphabetically)
+            aValue = Array.from(a.cupSizes).sort().join(', ') || 'ZZZ';
+            bValue = Array.from(b.cupSizes).sort().join(', ') || 'ZZZ';
+            return aValue.localeCompare(bValue);
+          
+          case 'orderNumber':
+            aValue = a.orderNumber || '';
+            bValue = b.orderNumber || '';
+            return aValue.localeCompare(bValue);
+          
+          case 'fulfillmentId':
+            aValue = a.tranid || '';
+            bValue = b.tranid || '';
+            return aValue.localeCompare(bValue);
+          
+          default:
+            return 0;
+        }
+      });
+
+      // Reverse if descending
+      if (sortDirection === 'desc') {
+        orders.reverse();
+      }
+    }
+
+    return orders;
+  }, [allOrders, personalizedFilter, selectedCupSizes, selectedBoxSize, dateFrom, dateTo, printedFilter, printedOrders, sortColumn, sortDirection]);
+
+  // Total personalized cups across filtered orders
+  const totalPersCups = useMemo(() => {
+    let total = 0;
+    for (const order of filteredOrders) {
+      for (const item of order.items) {
+        // Treat SKUs ending in "-PERS" as personalized cups
+        if (item.sku && item.sku.toUpperCase().endsWith('-PERS')) {
+          total += item.quantity;
+        }
+      }
+    }
+    return total;
+  }, [filteredOrders]);
 
   // Clear selected orders when filters change (to avoid selecting orders that are no longer visible)
   useEffect(() => {
@@ -139,6 +225,44 @@ export default function Home() {
   const handleSelectFirst = (count: number) => {
     const firstNOrders = filteredOrders.slice(0, count);
     setSelectedOrderIds(new Set(firstNOrders.map(o => o.tranid)));
+  };
+
+  // Handle column sorting
+  const handleSort = (column: 'date' | 'cupSize' | 'orderNumber' | 'fulfillmentId') => {
+    if (sortColumn === column) {
+      // Toggle direction if clicking the same column
+      setSortDirection(sortDirection === 'asc' ? 'desc' : 'asc');
+    } else {
+      // Set new column and default to ascending
+      setSortColumn(column);
+      setSortDirection('asc');
+    }
+  };
+
+  // Render sort indicator
+  const renderSortIndicator = (column: 'date' | 'cupSize' | 'orderNumber' | 'fulfillmentId') => {
+    if (sortColumn !== column) {
+      return (
+        <span className="ml-1 text-gray-400">
+          <svg className="w-4 h-4 inline" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16V4m0 0L3 8m4-4l4 4m6 0v12m0 0l4-4m-4 4l-4-4" />
+          </svg>
+        </span>
+      );
+    }
+    return (
+      <span className="ml-1 text-blue-600">
+        {sortDirection === 'asc' ? (
+          <svg className="w-4 h-4 inline" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 15l7-7 7 7" />
+          </svg>
+        ) : (
+          <svg className="w-4 h-4 inline" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+          </svg>
+        )}
+      </span>
+    );
   };
 
   const handlePrintPackingSlips = async () => {
@@ -215,7 +339,22 @@ export default function Home() {
   return (
     <div className="min-h-screen bg-gray-50 p-6">
       <div className="max-w-7xl mx-auto">
-        <h1 className="text-3xl font-bold text-gray-900 mb-6">Packing Slips - Personalized Orders</h1>
+        <div className="flex items-center justify-between mb-6 gap-4">
+          <h1 className="text-3xl font-bold text-gray-900">
+            Packing Slips - Personalized Orders
+          </h1>
+          <button
+            onClick={loadData}
+            disabled={syncing}
+            className={`inline-flex items-center px-4 py-2 rounded-md text-sm font-medium ${
+              syncing
+                ? 'bg-gray-300 text-gray-600 cursor-not-allowed'
+                : 'bg-blue-600 text-white hover:bg-blue-700'
+            }`}
+          >
+            {syncing ? 'Syncing…' : 'Sync Orders'}
+          </button>
+        </div>
 
         {/* Filters Section */}
         <div className="bg-white rounded-lg shadow-md p-6 mb-6">
@@ -400,14 +539,17 @@ export default function Home() {
           </div>
         </div>
 
-        {/* Results Summary and Print Button */}
-        <div className="bg-white rounded-lg shadow-md p-4 mb-6 flex justify-between items-center">
-          <div className="flex items-center gap-4">
-            <span className="text-lg font-semibold">
+        {/* Results Summary, Total Pers Count, and Print Buttons */}
+        <div className="bg-white rounded-lg shadow-md p-4 mb-6 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+          <div className="space-y-1">
+            <span className="block text-lg font-semibold">
               {filteredOrders.length} order{filteredOrders.length !== 1 ? 's' : ''} found
             </span>
+            <span className="block text-sm font-semibold text-indigo-700">
+              TOTAL PERS CUPS COUNT: {totalPersCups}
+            </span>
             {filteredOrders.length > 0 && (
-              <div className="flex gap-2">
+              <div className="flex flex-wrap gap-2 mt-1">
                 <button
                   onClick={() => handleSelectFirst(10)}
                   className="px-3 py-1 text-sm bg-gray-100 text-gray-700 rounded hover:bg-gray-200 border border-gray-300"
@@ -461,20 +603,44 @@ export default function Home() {
                       className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
                     />
                   </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Order #
+                  <th 
+                    className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100 select-none"
+                    onClick={() => handleSort('orderNumber')}
+                  >
+                    <div className="flex items-center">
+                      Order #
+                      {renderSortIndicator('orderNumber')}
+                    </div>
                   </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Fulfillment ID
+                  <th 
+                    className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100 select-none"
+                    onClick={() => handleSort('fulfillmentId')}
+                  >
+                    <div className="flex items-center">
+                      Fulfillment ID
+                      {renderSortIndicator('fulfillmentId')}
+                    </div>
                   </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Date
+                  <th 
+                    className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100 select-none"
+                    onClick={() => handleSort('date')}
+                  >
+                    <div className="flex items-center">
+                      Date
+                      {renderSortIndicator('date')}
+                    </div>
                   </th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                     Personalized
                   </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Cup Sizes
+                  <th 
+                    className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100 select-none"
+                    onClick={() => handleSort('cupSize')}
+                  >
+                    <div className="flex items-center">
+                      Cup Sizes
+                      {renderSortIndicator('cupSize')}
+                    </div>
                   </th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                     Box Size

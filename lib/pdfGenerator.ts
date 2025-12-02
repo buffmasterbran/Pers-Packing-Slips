@@ -17,12 +17,13 @@ export async function generatePackingSlipsPDF(orders: ProcessedOrder[]): Promise
     format: 'letter',
   });
 
-  // Separate singles from other orders
+  // Separate singles / small packs from other orders
   const singlesOrders: ProcessedOrder[] = [];
   const otherOrders: ProcessedOrder[] = [];
   
   for (const order of orders) {
-    if (order.boxSize === 'singles') {
+    // Treat Singles and 2/4 Packs (boxSize '4pack') as "small" orders: 2 per page
+    if (order.boxSize === 'singles' || order.boxSize === '4pack') {
       singlesOrders.push(order);
     } else {
       otherOrders.push(order);
@@ -229,12 +230,18 @@ async function drawHeader(doc: jsPDF, order: ProcessedOrder, x: number, y: numbe
 
   // Order details with borders
   doc.setFontSize(isNarrow ? 7 : 9);
+
+  // Display order date instead of ship method in header details
+  const orderDateDisplay = order.datecreated
+    ? order.datecreated.split(' ')[0] // Show just the date portion (MM/DD/YYYY)
+    : '';
+
   const details = [
     { label: 'Order Number', value: order.orderNumber },
     { label: 'Item Fulfillment', value: order.tranid },
     { label: 'PO Number', value: order.poNumber || '' },
     { label: 'Order Notes', value: order.memo || '' },
-    { label: 'Ship Method', value: order.shipmethod || '' },
+    { label: 'Order Date', value: orderDateDisplay },
   ];
 
   const detailX = x + col1Width + col2Width;

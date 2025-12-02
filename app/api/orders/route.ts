@@ -1,6 +1,4 @@
 import { NextResponse } from 'next/server';
-import fs from 'fs';
-import path from 'path';
 import OAuth from 'oauth-1.0a';
 import crypto from 'crypto';
 
@@ -9,25 +7,26 @@ const NETSUITE_RESTLET_URL = process.env.NETSUITE_RESTLET_URL ||
 
 export async function GET(request: Request) {
   try {
-    // Check if we should use NetSuite API or sample data
-    const useNetSuite = process.env.USE_NETSUITE_API === 'true' && 
-                        process.env.NETSUITE_OAUTH_CONSUMER_KEY &&
-                        process.env.NETSUITE_OAUTH_TOKEN &&
-                        process.env.NETSUITE_OAUTH_CONSUMER_SECRET &&
-                        process.env.NETSUITE_OAUTH_TOKEN_SECRET;
+    // Always fetch from NetSuite API (no local sample JSON fallback)
+    const requiredEnv = [
+      'NETSUITE_OAUTH_CONSUMER_KEY',
+      'NETSUITE_OAUTH_CONSUMER_SECRET',
+      'NETSUITE_OAUTH_TOKEN',
+      'NETSUITE_OAUTH_TOKEN_SECRET',
+    ];
 
-    if (useNetSuite) {
-      // Fetch from NetSuite API
-      const response = await fetchFromNetSuite();
-      return NextResponse.json(response);
-    } else {
-      // Use sample data (fallback for development)
-      const filePath = path.join(process.cwd(), 'sample-response.json');
-      const fileContents = fs.readFileSync(filePath, 'utf8');
-      const data = JSON.parse(fileContents);
-      
-      return NextResponse.json(data);
+    const missing = requiredEnv.filter((key) => !process.env[key]);
+    if (missing.length > 0) {
+      throw new Error(
+        `Missing required NetSuite env vars: ${missing.join(
+          ', '
+        )}. Please follow NETSUITE_SETUP.md.`
+      );
     }
+
+    // Fetch from NetSuite API
+    const response = await fetchFromNetSuite();
+    return NextResponse.json(response);
   } catch (error) {
     console.error('Error loading orders:', error);
     return NextResponse.json(
