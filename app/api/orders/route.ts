@@ -2,6 +2,10 @@ import { NextResponse } from 'next/server';
 import OAuth from 'oauth-1.0a';
 import crypto from 'crypto';
 
+// Force dynamic rendering - never cache this route
+export const dynamic = 'force-dynamic';
+export const revalidate = 0;
+
 const NETSUITE_RESTLET_URL = process.env.NETSUITE_RESTLET_URL || 
   'https://7913744.restlets.api.netsuite.com/app/site/hosting/restlet.nl?script=2796&deploy=1';
 

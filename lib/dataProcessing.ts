@@ -169,8 +169,7 @@ export function processOrders(items: NetSuiteItem[], orderConfig: OrderConfig): 
     processedOrders.push({
       tranid,
       orderNumber: firstItem.values['createdFrom.otherrefnum_1'] || firstItem.values['createdFrom.tranid'],
-      // Prefer explicit shop order date if available, fall back to record creation date
-      datecreated: firstItem.values['createdFrom.custbody_pir_shop_order_date'] || firstItem.values.datecreated,
+      datecreated: firstItem.values.datecreated,
       shipaddress: firstItem.values.shipaddress,
       personalized,
       items: processedItems,
@@ -340,41 +339,29 @@ export function filterOrders(
 }
 
 /**
- * Parse date string from NetSuite format.
- * Supports both:
- *  - "MM/DD/YYYY HH:MM am/pm" (standard NetSuite datetime)
- *  - "MM/DD/YYYY" (shop order date without time)
+ * Parse date string from NetSuite format (e.g., "10/08/2025 8:53 am")
  */
 function parseDate(dateStr: string): Date | null {
-  if (!dateStr) return null;
-
   try {
-    const parts = dateStr.trim().split(' ');
+    // NetSuite format: "MM/DD/YYYY HH:MM am/pm"
+    const parts = dateStr.split(' ');
+    if (parts.length < 2) return null;
+    
     const datePart = parts[0]; // "MM/DD/YYYY"
+    const timePart = parts.slice(1).join(' '); // "HH:MM am/pm"
+    
     const [month, day, year] = datePart.split('/').map(Number);
-
-    if (!month || !day || !year) return null;
-
-    // If we only have a date (shop order date), treat it as midnight
-    if (parts.length < 2) {
-      return new Date(year, month - 1, day, 0, 0);
-    }
-
-    // Full datetime: "HH:MM am/pm"
-    const timePart = parts.slice(1).join(' ');
     const timeMatch = timePart.match(/(\d+):(\d+)\s*(am|pm)/i);
-    if (!timeMatch) {
-      // Fallback: just return date-only if time can't be parsed
-      return new Date(year, month - 1, day, 0, 0);
-    }
-
+    
+    if (!timeMatch) return null;
+    
     let hours = parseInt(timeMatch[1]);
     const minutes = parseInt(timeMatch[2]);
     const ampm = timeMatch[3].toLowerCase();
-
+    
     if (ampm === 'pm' && hours !== 12) hours += 12;
     if (ampm === 'am' && hours === 12) hours = 0;
-
+    
     return new Date(year, month - 1, day, hours, minutes);
   } catch {
     return null;

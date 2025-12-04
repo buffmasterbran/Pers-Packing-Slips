@@ -4,7 +4,7 @@ import { useState, useEffect, useMemo } from 'react';
 import { NetSuiteItem, ProcessedOrder, OrderConfig } from '@/lib/types';
 import { processOrders, filterOrders } from '@/lib/dataProcessing';
 import { getPrintedOrders, markOrdersAsPrinted, clearPrintedOrders } from '@/lib/storage';
-import { generatePackingSlipsPDF, generatePicklistPDF } from '@/lib/pdfGenerator';
+import { generatePackingSlipsPDF, generatePicklistPDF, generateCombinedPDF } from '@/lib/pdfGenerator';
 import orderConfig from '../order-config.json';
 
 export default function Home() {
@@ -56,8 +56,9 @@ export default function Home() {
       const processed = processOrders(items, orderConfig as OrderConfig);
       setAllOrders(processed);
       
-      // Load printed orders from localStorage
-      setPrintedOrders(getPrintedOrders());
+      // Load printed orders from database
+      const printed = await getPrintedOrders();
+      setPrintedOrders(printed);
     } catch (err) {
       console.error('Error loading data:', err);
       setError(err instanceof Error ? err.message : 'Failed to load data');
@@ -188,8 +189,8 @@ export default function Home() {
   // Clear all printed orders (for development/testing)
   // You can call this from browser console: window.clearAllPrintedOrders()
   useEffect(() => {
-    (window as any).clearAllPrintedOrders = () => {
-      clearPrintedOrders();
+    (window as any).clearAllPrintedOrders = async () => {
+      await clearPrintedOrders();
       setPrintedOrders(new Set());
       alert('All orders cleared from printed status');
     };
@@ -273,12 +274,28 @@ export default function Home() {
       return;
     }
 
+    // Check if filter is Non-Personalized or All, and show confirmation
+    if (personalizedFilter === false || personalizedFilter === null) {
+      const confirmed = window.confirm('Are you sure you want to print Non-Personalized packing slips?');
+      if (!confirmed) {
+        return; // User cancelled, don't proceed
+      }
+    }
+
+    // Check if Packing Slip Status filter is All or Printed, and show confirmation
+    if (printedFilter === null || printedFilter === true) {
+      const confirmed = window.confirm('Are you sure you want to print packing slips that may have already been printed?');
+      if (!confirmed) {
+        return; // User cancelled, don't proceed
+      }
+    }
+
     try {
       await generatePackingSlipsPDF(ordersToPrint);
       
       // Mark orders as printed
       const tranids = ordersToPrint.map(o => o.tranid);
-      markOrdersAsPrinted(tranids);
+      await markOrdersAsPrinted(tranids);
       setPrintedOrders(prev => {
         const newSet = new Set(prev);
         tranids.forEach(id => newSet.add(id));
@@ -303,6 +320,48 @@ export default function Home() {
     } catch (error) {
       console.error('Error generating picklist:', error);
       alert('Error generating picklist. Please try again.');
+    }
+  };
+
+  const handlePrintPicklistAndPackingSlips = async () => {
+    const ordersToPrint = selectedOrders.length > 0 ? selectedOrders : filteredOrders;
+    
+    if (ordersToPrint.length === 0) {
+      alert('No orders selected to print');
+      return;
+    }
+
+    // Check if filter is Non-Personalized or All, and show confirmation
+    if (personalizedFilter === false || personalizedFilter === null) {
+      const confirmed = window.confirm('Are you sure you want to print Non-Personalized packing slips?');
+      if (!confirmed) {
+        return; // User cancelled, don't proceed
+      }
+    }
+
+    // Check if Packing Slip Status filter is All or Printed, and show confirmation
+    if (printedFilter === null || printedFilter === true) {
+      const confirmed = window.confirm('Are you sure you want to print packing slips that may have already been printed?');
+      if (!confirmed) {
+        return; // User cancelled, don't proceed
+      }
+    }
+
+    try {
+      // Generate combined PDF with both picklist and packing slips
+      await generateCombinedPDF(ordersToPrint);
+      
+      // Mark orders as printed
+      const tranids = ordersToPrint.map(o => o.tranid);
+      await markOrdersAsPrinted(tranids);
+      setPrintedOrders(prev => {
+        const newSet = new Set(prev);
+        tranids.forEach(id => newSet.add(id));
+        return newSet;
+      });
+    } catch (error) {
+      console.error('Error generating PDFs:', error);
+      alert('Error generating PDFs. Please try again.');
     }
   };
 
@@ -585,6 +644,13 @@ export default function Home() {
               className="px-6 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 disabled:bg-gray-400 disabled:cursor-not-allowed"
             >
               Print Packing Slips ({selectedOrders.length > 0 ? selectedOrders.length : filteredOrders.length})
+            </button>
+            <button
+              onClick={handlePrintPicklistAndPackingSlips}
+              disabled={filteredOrders.length === 0}
+              className="px-6 py-2 bg-purple-600 text-white rounded-md hover:bg-purple-700 disabled:bg-gray-400 disabled:cursor-not-allowed"
+            >
+              Print Picklist and Packing Slips ({selectedOrders.length > 0 ? selectedOrders.length : filteredOrders.length})
             </button>
           </div>
         </div>
@@ -922,7 +988,7 @@ export default function Home() {
                   
                   <div className="space-y-4">
                     <p className="text-sm text-gray-600">
-                      To clear all printed statuses, open your browser's developer console (F12) and run:
+                      To clear all printed statuses, open your browser&apos;s developer console (F12) and run:
                     </p>
                     
                     <div className="bg-gray-100 rounded-lg p-4 flex items-center justify-between">
@@ -942,7 +1008,7 @@ export default function Home() {
                       <p><strong>Steps:</strong></p>
                       <ol className="list-decimal list-inside space-y-1 ml-2">
                         <li>Press F12 to open Developer Tools</li>
-                        <li>Click on the "Console" tab</li>
+                        <li>Click on the &quot;Console&quot; tab</li>
                         <li>Paste or type: <code className="bg-gray-200 px-1 rounded">window.clearAllPrintedOrders()</code></li>
                         <li>Press Enter</li>
                       </ol>

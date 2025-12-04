@@ -83,9 +83,12 @@ export async function generatePackingSlipsPDF(orders: ProcessedOrder[]): Promise
     }
   }
 
-  // Save the PDF
-  const filename = `packing-slips-${new Date().toISOString().split('T')[0]}.pdf`;
-  doc.save(filename);
+  // Open PDF in new tab instead of downloading
+  const pdfBlob = doc.output('blob');
+  const pdfUrl = URL.createObjectURL(pdfBlob);
+  window.open(pdfUrl, '_blank');
+  // Clean up the object URL after a short delay (browser will handle it when tab closes)
+  setTimeout(() => URL.revokeObjectURL(pdfUrl), 100);
 }
 
 /**
@@ -341,25 +344,48 @@ async function loadImageAsDataUrl(url: string, maxWidth: number = 300, maxHeight
 
 /**
  * Generate barcode using jsbarcode (works in browser)
+ * Generates at high resolution (300 DPI equivalent) for crisp printing
+ * NetSuite generates barcodes at print resolution, so we match that quality
+ * @param value - The barcode value to encode
+ * @param targetWidthInches - Target width in inches (for proper aspect ratio)
+ * @param targetHeightInches - Target height in inches (for proper aspect ratio)
  */
-async function generateBarcodeAsync(value: string): Promise<string | null> {
+async function generateBarcodeAsync(
+  value: string, 
+  targetWidthInches: number = 1.99, 
+  targetHeightInches: number = 0.46
+): Promise<string | null> {
   if (!value) return null;
   
   try {
-    // Use the value as-is (ShipStation barcodes need the ^#^ wrapper to scan)
-    // For item barcodes, use the value directly
-    // For ShipStation order IDs, keep the ^#^ wrapper
+    // Generate at high resolution for print quality (300 DPI equivalent)
+    // At 300 DPI, 1 inch = 300 pixels
+    const scaleFactor = 3; // 3x resolution for crisp printing (matches 300 DPI)
+    const targetWidthPx = targetWidthInches * 300; // 300 DPI base
+    const targetHeightPx = targetHeightInches * 300; // 300 DPI base
+    const highResWidth = targetWidthPx * scaleFactor;
+    const highResHeight = targetHeightPx * scaleFactor;
     
-    // Create a temporary canvas
+    // Create a temporary canvas with explicit high-resolution dimensions
     const canvas = document.createElement('canvas');
+    canvas.width = Math.ceil(highResWidth);
+    canvas.height = Math.ceil(highResHeight);
+    
+    // Generate barcode at high resolution
+    // Calculate bar width to maintain proper barcode density
+    // CODE128 bar width of 2 is standard, scale for high res
+    const barWidth = 2 * scaleFactor;
+    const barcodeHeight = highResHeight;
+    
     JsBarcode(canvas, value, {
       format: 'CODE128',
-      width: 2,
-      height: 40,
+      width: barWidth,
+      height: barcodeHeight,
       displayValue: true,
-      fontSize: 12,
+      fontSize: 12 * scaleFactor, // Scale font for readability at high res
     });
     
+    // Return as PNG (lossless) for maximum quality
     return canvas.toDataURL('image/png');
   } catch (error) {
     console.warn('Failed to generate barcode:', error);
@@ -491,10 +517,11 @@ async function drawItemsTable(
     // Barcode column - center aligned
     if (item.barcode) {
       try {
-        const barcodeDataUrl = await generateBarcodeAsync(item.barcode);
+        const barcodeWidth = isNarrow ? 0.99 : 1.99; // Increased by additional 15% for better scannability
+        const barcodeHeight = isNarrow ? 0.23 : 0.46; // Increased by 15% for better scannability
+        // Generate barcode at target size for proper aspect ratio
+        const barcodeDataUrl = await generateBarcodeAsync(item.barcode, barcodeWidth, barcodeHeight);
         if (barcodeDataUrl) {
-          const barcodeWidth = isNarrow ? 0.75 : 1.5;
-          const barcodeHeight = isNarrow ? 0.2 : 0.4;
           const barcodeX = xPos + (colWidths[2] - barcodeWidth) / 2; // Center horizontally
           const barcodeY = rowStartY + (rowHeight - barcodeHeight) / 2; // Center vertically
           doc.addImage(barcodeDataUrl, 'PNG', barcodeX, barcodeY, barcodeWidth, barcodeHeight);
@@ -553,10 +580,11 @@ async function drawFooter(doc: jsPDF, order: ProcessedOrder, x: number, y: numbe
     try {
       // Use the full ShipStation order ID with ^#^ wrapper for scanning
       const barcodeValue = order.shipstationOrderId;
-      const barcodeDataUrl = await generateBarcodeAsync(barcodeValue);
+      const barcodeWidth = isNarrow ? 0.99 : 1.99; // Increased by additional 15% for better scannability
+      const barcodeHeight = isNarrow ? 0.23 : 0.46; // Increased by 15% for better scannability
+      // Generate barcode at target size for proper aspect ratio
+      const barcodeDataUrl = await generateBarcodeAsync(barcodeValue, barcodeWidth, barcodeHeight);
       if (barcodeDataUrl) {
-        const barcodeWidth = isNarrow ? 0.75 : 1.5;
-        const barcodeHeight = isNarrow ? 0.2 : 0.4;
         doc.addImage(barcodeDataUrl, 'PNG', x, y - 0.25, barcodeWidth, barcodeHeight);
       }
     } catch (error) {
@@ -567,7 +595,8 @@ async function drawFooter(doc: jsPDF, order: ProcessedOrder, x: number, y: numbe
   // Page number (right aligned) - skip for singles to save space
   if (!isNarrow) {
     const pageInfo = doc.getCurrentPageInfo();
-    doc.text(`Page ${pageInfo.pageNumber} of ${pageInfo.pages}`, x + width, y, { align: 'right' });
+    const totalPages = doc.getNumberOfPages();
+    doc.text(`Page ${pageInfo.pageNumber} of ${totalPages}`, x + width, y, { align: 'right' });
   }
 }
 
@@ -625,10 +654,62 @@ export async function generatePicklistPDF(orders: ProcessedOrder[]): Promise<voi
     }
   }
 
-  // Sort by location then SKU (- goes last)
-  const sortedKeys = Array.from(itemsByLocation.keys()).sort((a, b) => {
-    const [locationA, skuA] = a.split('|');
-    const [locationB, skuB] = b.split('|');
+  // Separate PERS and non-PERS items, and extract base SKUs
+  interface ItemWithBaseSku extends PicklistItem {
+    baseSku: string; // SKU without -PERS suffix
+  }
+  
+  const persItems: ItemWithBaseSku[] = [];
+  const nonPersItems: ItemWithBaseSku[] = [];
+  
+  for (const item of itemsByLocation.values()) {
+    const baseSku = item.sku.endsWith('-PERS') ? item.sku.replace('-PERS', '') : item.sku;
+    const itemWithBase: ItemWithBaseSku = { ...item, baseSku };
+    
+    if (item.sku.endsWith('-PERS')) {
+      persItems.push(itemWithBase);
+    } else {
+      nonPersItems.push(itemWithBase);
+    }
+  }
+  
+  // Create maps by base SKU for easy matching
+  const persByBaseSku = new Map<string, ItemWithBaseSku[]>();
+  const nonPersByBaseSku = new Map<string, ItemWithBaseSku[]>();
+  
+  for (const item of persItems) {
+    if (!persByBaseSku.has(item.baseSku)) {
+      persByBaseSku.set(item.baseSku, []);
+    }
+    persByBaseSku.get(item.baseSku)!.push(item);
+  }
+  
+  for (const item of nonPersItems) {
+    if (!nonPersByBaseSku.has(item.baseSku)) {
+      nonPersByBaseSku.set(item.baseSku, []);
+    }
+    nonPersByBaseSku.get(item.baseSku)!.push(item);
+  }
+  
+  // Calculate total personalized cups
+  const totalPersonalizedCups = persItems.reduce((sum, item) => sum + item.totalQuantity, 0);
+
+  // Get all unique base SKUs and sort by location then base SKU
+  const allBaseSkus = new Set<string>();
+  for (const item of [...persItems, ...nonPersItems]) {
+    allBaseSkus.add(item.baseSku);
+  }
+  
+  // Sort base SKUs by the first item's location (prioritize PERS if both exist)
+  const sortedBaseSkus = Array.from(allBaseSkus).sort((baseSkuA, baseSkuB) => {
+    const persA = persByBaseSku.get(baseSkuA)?.[0];
+    const nonPersA = nonPersByBaseSku.get(baseSkuA)?.[0];
+    const persB = persByBaseSku.get(baseSkuB)?.[0];
+    const nonPersB = nonPersByBaseSku.get(baseSkuB)?.[0];
+    
+    // Get location from PERS item if available, otherwise non-PERS
+    const locationA = (persA || nonPersA)?.pickLocation || '-';
+    const locationB = (persB || nonPersB)?.pickLocation || '-';
     
     if (locationA === '-' && locationB !== '-') return 1;
     if (locationB === '-' && locationA !== '-') return -1;
@@ -636,7 +717,7 @@ export async function generatePicklistPDF(orders: ProcessedOrder[]): Promise<voi
     const locationCompare = locationA.localeCompare(locationB);
     if (locationCompare !== 0) return locationCompare;
     
-    return skuA.localeCompare(skuB);
+    return baseSkuA.localeCompare(baseSkuB);
   });
 
   const doc = new jsPDF({
@@ -657,94 +738,527 @@ export async function generatePicklistPDF(orders: ProcessedOrder[]): Promise<voi
   doc.text('PICKLIST', margin, currentY);
   currentY += 0.3;
 
-  doc.setFontSize(10);
-  doc.setFont('helvetica', 'normal');
-  doc.text(`Generated: ${new Date().toLocaleDateString()} ${new Date().toLocaleTimeString()}`, margin, currentY);
-  currentY += 0.2;
-  doc.text(`Total Orders: ${orders.length}`, margin, currentY);
-  currentY += 0.3;
-
-  // Draw header line
-  doc.setLineWidth(0.01);
-  doc.line(margin, currentY, margin + contentWidth, currentY);
-  currentY += 0.2;
-
-  // Table headers
+  // Create a 2x2 table for header info
   doc.setFontSize(9);
-  doc.setFont('helvetica', 'bold');
-  const colWidths = [0.8, 3.5, 1.5, 2.2]; // Location, SKU, Qty, Color
-  const headers = ['LOCATION', 'ITEM', 'QTY', 'COLOR'];
+  const tableColWidth = contentWidth / 2;
+  const tableRowHeight = 0.2;
+  const tableStartX = margin;
+  const tableStartY = currentY;
   
-  let xPos = margin;
-  for (let i = 0; i < headers.length; i++) {
-    doc.text(headers[i], xPos + colWidths[i] / 2, currentY, { align: 'center' });
-    xPos += colWidths[i];
+  // Row 1, Col 1: Generated
+  doc.setFont('helvetica', 'normal');
+  doc.text(`Generated: ${new Date().toLocaleDateString()} ${new Date().toLocaleTimeString()}`, tableStartX, tableStartY);
+  
+  // Row 1, Col 2: Total Orders
+  doc.text(`Total Orders: ${orders.length}`, tableStartX + tableColWidth, tableStartY);
+  
+  // Row 2, Col 1: First Order
+  const row2Y = tableStartY + tableRowHeight;
+  if (orders.length > 0 && orders[0].orderNumber) {
+    doc.setFont('helvetica', 'bold');
+    doc.text(`First Order: ${orders[0].orderNumber}`, tableStartX, row2Y);
   }
   
-  currentY += 0.15;
+  // Row 2, Col 2: Personalized Cups
+  doc.setFont('helvetica', 'bold');
+  doc.text(`Personalized Cups: ${totalPersonalizedCups}`, tableStartX + tableColWidth, row2Y);
+  
+  currentY = row2Y + tableRowHeight + 0.1;
+
+  // Draw header line under title block
   doc.setLineWidth(0.01);
   doc.line(margin, currentY, margin + contentWidth, currentY);
-  currentY += 0.15;
+  currentY += 0.2;
 
-  // Items grouped by location
-  doc.setFont('helvetica', 'normal');
-  doc.setFontSize(8);
+  // Two-column layout: PERS on left, non-PERS on right
+  const columnWidth = (contentWidth - 0.3) / 2; // Split width with gap between columns
+  const leftColumnX = margin;
+  const rightColumnX = margin + columnWidth + 0.3; // 0.3" gap between columns
+  const colWidths = [0.8, 1.0, columnWidth - 0.8 - 1.0]; // Location, Qty, Item (no Color)
+  const headers = ['LOCATION', 'QTY', 'ITEM'];
+  const headerAlignments: Array<'left' | 'center' | 'right'> = ['center', 'center', 'left'];
+  
+  let xPos = margin;
 
-  for (const key of sortedKeys) {
-    const item = itemsByLocation.get(key)!;
-    const location = item.pickLocation;
-    
-    // Check if we need a new page
-    if (currentY > pageHeight - margin - 0.8) {
-      doc.addPage();
-      currentY = margin;
-      
-      // Redraw headers
-      xPos = margin;
-      doc.setFont('helvetica', 'bold');
-      for (let i = 0; i < headers.length; i++) {
+  // Helper function to render a column header
+  const renderColumnHeader = (x: number, title: string) => {
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(9);
+    let xPos = x;
+    for (let i = 0; i < headers.length; i++) {
+      const align = headerAlignments[i];
+      if (align === 'center') {
         doc.text(headers[i], xPos + colWidths[i] / 2, currentY, { align: 'center' });
-        xPos += colWidths[i];
+      } else if (align === 'right') {
+        doc.text(headers[i], xPos + colWidths[i], currentY, { align: 'right' });
+      } else {
+        doc.text(headers[i], xPos, currentY, { align: 'left' });
       }
-      currentY += 0.15;
-      doc.setLineWidth(0.01);
-      doc.line(margin, currentY, margin + contentWidth, currentY);
-      currentY += 0.15;
-      doc.setFont('helvetica', 'normal');
+      xPos += colWidths[i];
     }
+  };
 
+  // Helper function to render a single item row
+  const renderItemRow = (x: number, item: ItemWithBaseSku) => {
     const rowStartY = currentY;
-    xPos = margin;
+    let xPos = x;
 
     // Location
     doc.setFont('helvetica', 'bold');
-    doc.text(location, xPos + colWidths[0] / 2, rowStartY + 0.1, { align: 'center' });
+    doc.text(item.pickLocation, xPos + colWidths[0] / 2, rowStartY + 0.1, { align: 'center' });
     xPos += colWidths[0];
-
-    // SKU only (no description)
-    doc.setFont('helvetica', 'bold');
-    doc.text(item.sku, xPos, rowStartY + 0.1);
-    xPos += colWidths[1];
 
     // Quantity
     doc.setFont('helvetica', 'bold');
-    doc.text(item.totalQuantity.toString(), xPos + colWidths[2] / 2, rowStartY + 0.1, { align: 'center' });
-    xPos += colWidths[2];
+    doc.text(item.totalQuantity.toString(), xPos + colWidths[1] / 2, rowStartY + 0.1, { align: 'center' });
+    xPos += colWidths[1];
 
-    // Color
-    doc.setFont('helvetica', 'normal');
-    doc.text(item.color || '', xPos + colWidths[3] / 2, rowStartY + 0.1, { align: 'center', maxWidth: colWidths[3] - 0.1 });
-    xPos += colWidths[3];
+    // SKU
+    doc.setFont('helvetica', 'bold');
+    doc.text(item.sku, xPos, rowStartY + 0.1);
+  };
 
-    currentY = rowStartY + 0.2;
+  // Render section headers
+  doc.setFontSize(12);
+  doc.setFont('helvetica', 'bold');
+  doc.text('PERSONALIZED ITEMS', leftColumnX, currentY);
+  doc.text('NON-PERSONALIZED ITEMS', rightColumnX, currentY);
+  currentY += 0.25;
+
+  // Render column headers for both columns
+  renderColumnHeader(leftColumnX, 'PERSONALIZED');
+  renderColumnHeader(rightColumnX, 'NON-PERSONALIZED');
+  currentY += 0.15;
+  
+  // Draw header lines for both columns
+  doc.setLineWidth(0.01);
+  doc.line(leftColumnX, currentY, leftColumnX + columnWidth, currentY);
+  doc.line(rightColumnX, currentY, rightColumnX + columnWidth, currentY);
+  currentY += 0.15;
+
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(8);
+
+  // Render items aligned by base SKU
+  for (const baseSku of sortedBaseSkus) {
+    const persItemsForSku = persByBaseSku.get(baseSku) || [];
+    const nonPersItemsForSku = nonPersByBaseSku.get(baseSku) || [];
+    const maxRowsForSku = Math.max(persItemsForSku.length, nonPersItemsForSku.length, 1);
+    
+    // Check if we need a new page (account for multiple rows)
+    if (currentY + (maxRowsForSku * 0.2) + 0.1 > pageHeight - margin - 0.8) {
+      doc.addPage();
+      currentY = margin;
+      
+      // Redraw section headers
+      doc.setFontSize(12);
+      doc.setFont('helvetica', 'bold');
+      doc.text('PERSONALIZED ITEMS', leftColumnX, currentY);
+      doc.text('NON-PERSONALIZED ITEMS', rightColumnX, currentY);
+      currentY += 0.25;
+      
+      // Redraw column headers
+      renderColumnHeader(leftColumnX, 'PERSONALIZED');
+      renderColumnHeader(rightColumnX, 'NON-PERSONALIZED');
+      currentY += 0.15;
+      
+      doc.setLineWidth(0.01);
+      doc.line(leftColumnX, currentY, leftColumnX + columnWidth, currentY);
+      doc.line(rightColumnX, currentY, rightColumnX + columnWidth, currentY);
+      currentY += 0.15;
+      
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(8);
+    }
+
+    const rowStartY = currentY;
+    
+    // Render PERS items on the left (can be multiple if same base SKU in different locations)
+    let persRowY = rowStartY;
+    for (const persItem of persItemsForSku) {
+      let xPos = leftColumnX;
+      
+      // Location
+      doc.setFont('helvetica', 'bold');
+      doc.text(persItem.pickLocation, xPos + colWidths[0] / 2, persRowY + 0.1, { align: 'center' });
+      xPos += colWidths[0];
+      
+      // Quantity
+      doc.setFont('helvetica', 'bold');
+      doc.text(persItem.totalQuantity.toString(), xPos + colWidths[1] / 2, persRowY + 0.1, { align: 'center' });
+      xPos += colWidths[1];
+      
+      // SKU
+      doc.setFont('helvetica', 'bold');
+      doc.text(persItem.sku, xPos, persRowY + 0.1);
+      
+      persRowY += 0.2; // Move down for next PERS item
+    }
+    
+    // Render non-PERS items on the right (can be multiple if same base SKU in different locations)
+    let nonPersRowY = rowStartY;
+    for (const nonPersItem of nonPersItemsForSku) {
+      let xPos = rightColumnX;
+      
+      // Location
+      doc.setFont('helvetica', 'bold');
+      doc.text(nonPersItem.pickLocation, xPos + colWidths[0] / 2, nonPersRowY + 0.1, { align: 'center' });
+      xPos += colWidths[0];
+      
+      // Quantity
+      doc.setFont('helvetica', 'bold');
+      doc.text(nonPersItem.totalQuantity.toString(), xPos + colWidths[1] / 2, nonPersRowY + 0.1, { align: 'center' });
+      xPos += colWidths[1];
+      
+      // SKU
+      doc.setFont('helvetica', 'bold');
+      doc.text(nonPersItem.sku, xPos, nonPersRowY + 0.1);
+      
+      nonPersRowY += 0.2; // Move down for next non-PERS item
+    }
+
+    // Move to next base SKU row (use the max height of both columns)
+    currentY = rowStartY + (maxRowsForSku * 0.2);
     
     // Draw row separator
     doc.setLineWidth(0.005);
-    doc.line(margin, currentY, margin + contentWidth, currentY);
+    doc.line(leftColumnX, currentY, leftColumnX + columnWidth, currentY);
+    doc.line(rightColumnX, currentY, rightColumnX + columnWidth, currentY);
     currentY += 0.1;
   }
 
-  // Save the PDF
-  const filename = `picklist-${new Date().toISOString().split('T')[0]}.pdf`;
-  doc.save(filename);
+  // Open PDF in new tab instead of downloading
+  const pdfBlob = doc.output('blob');
+  const pdfUrl = URL.createObjectURL(pdfBlob);
+  window.open(pdfUrl, '_blank');
+  // Clean up the object URL after a short delay (browser will handle it when tab closes)
+  setTimeout(() => URL.revokeObjectURL(pdfUrl), 100);
+}
+
+/**
+ * Generate a combined PDF with both picklist and packing slips
+ */
+export async function generateCombinedPDF(orders: ProcessedOrder[]): Promise<void> {
+  if (!orders || orders.length === 0) {
+    throw new Error('No orders provided');
+  }
+
+  // Start with picklist generation - reuse the same logic from generatePicklistPDF
+  // Collect all items with their pick locations and order info
+  interface PicklistItem {
+    sku: string;
+    description?: string;
+    color?: string;
+    pickLocation: string;
+    totalQuantity: number;
+    orders: Array<{ orderNumber: string; quantity: number }>;
+  }
+
+  const itemsByLocation = new Map<string, PicklistItem>();
+
+  for (const order of orders) {
+    for (const item of order.items) {
+      const location = item.pickLocation || '-';
+      const key = `${location}|${item.sku}`;
+      
+      if (!itemsByLocation.has(key)) {
+        itemsByLocation.set(key, {
+          sku: item.sku,
+          description: item.description,
+          color: item.color,
+          pickLocation: location,
+          totalQuantity: 0,
+          orders: [],
+        });
+      }
+
+      const picklistItem = itemsByLocation.get(key)!;
+      picklistItem.totalQuantity += item.quantity;
+      
+      const existingOrder = picklistItem.orders.find(o => o.orderNumber === order.orderNumber);
+      if (existingOrder) {
+        existingOrder.quantity += item.quantity;
+      } else {
+        picklistItem.orders.push({
+          orderNumber: order.orderNumber,
+          quantity: item.quantity,
+        });
+      }
+    }
+  }
+
+  interface ItemWithBaseSku extends PicklistItem {
+    baseSku: string;
+  }
+  
+  const persItems: ItemWithBaseSku[] = [];
+  const nonPersItems: ItemWithBaseSku[] = [];
+  
+  for (const item of itemsByLocation.values()) {
+    const baseSku = item.sku.endsWith('-PERS') ? item.sku.replace('-PERS', '') : item.sku;
+    const itemWithBase: ItemWithBaseSku = { ...item, baseSku };
+    
+    if (item.sku.endsWith('-PERS')) {
+      persItems.push(itemWithBase);
+    } else {
+      nonPersItems.push(itemWithBase);
+    }
+  }
+  
+  const persByBaseSku = new Map<string, ItemWithBaseSku[]>();
+  const nonPersByBaseSku = new Map<string, ItemWithBaseSku[]>();
+  
+  for (const item of persItems) {
+    if (!persByBaseSku.has(item.baseSku)) {
+      persByBaseSku.set(item.baseSku, []);
+    }
+    persByBaseSku.get(item.baseSku)!.push(item);
+  }
+  
+  for (const item of nonPersItems) {
+    if (!nonPersByBaseSku.has(item.baseSku)) {
+      nonPersByBaseSku.set(item.baseSku, []);
+    }
+    nonPersByBaseSku.get(item.baseSku)!.push(item);
+  }
+  
+  const totalPersonalizedCups = persItems.reduce((sum, item) => sum + item.totalQuantity, 0);
+
+  const allBaseSkus = new Set<string>();
+  for (const item of [...persItems, ...nonPersItems]) {
+    allBaseSkus.add(item.baseSku);
+  }
+  
+  const sortedBaseSkus = Array.from(allBaseSkus).sort((baseSkuA, baseSkuB) => {
+    const persA = persByBaseSku.get(baseSkuA)?.[0];
+    const nonPersA = nonPersByBaseSku.get(baseSkuA)?.[0];
+    const persB = persByBaseSku.get(baseSkuB)?.[0];
+    const nonPersB = nonPersByBaseSku.get(baseSkuB)?.[0];
+    
+    const locationA = (persA || nonPersA)?.pickLocation || '-';
+    const locationB = (persB || nonPersB)?.pickLocation || '-';
+    
+    if (locationA === '-' && locationB !== '-') return 1;
+    if (locationB === '-' && locationA !== '-') return -1;
+    
+    const locationCompare = locationA.localeCompare(locationB);
+    if (locationCompare !== 0) return locationCompare;
+    
+    return baseSkuA.localeCompare(baseSkuB);
+  });
+
+  const doc = new jsPDF({
+    orientation: 'portrait',
+    unit: 'in',
+    format: 'letter',
+  });
+
+  const pageWidth = 8.5;
+  const pageHeight = 11;
+  const margin = 0.5;
+  const contentWidth = pageWidth - (margin * 2);
+  let currentY = margin;
+
+  // Picklist Header
+  doc.setFontSize(20);
+  doc.setFont('helvetica', 'bold');
+  doc.text('PICKLIST', margin, currentY);
+  currentY += 0.3;
+
+  doc.setFontSize(9);
+  const tableColWidth = contentWidth / 2;
+  const tableRowHeight = 0.2;
+  const tableStartX = margin;
+  const tableStartY = currentY;
+  
+  doc.setFont('helvetica', 'normal');
+  doc.text(`Generated: ${new Date().toLocaleDateString()} ${new Date().toLocaleTimeString()}`, tableStartX, tableStartY);
+  doc.text(`Total Orders: ${orders.length}`, tableStartX + tableColWidth, tableStartY);
+  
+  const row2Y = tableStartY + tableRowHeight;
+  if (orders.length > 0 && orders[0].orderNumber) {
+    doc.setFont('helvetica', 'bold');
+    doc.text(`First Order: ${orders[0].orderNumber}`, tableStartX, row2Y);
+  }
+  
+  doc.setFont('helvetica', 'bold');
+  doc.text(`Personalized Cups: ${totalPersonalizedCups}`, tableStartX + tableColWidth, row2Y);
+  
+  currentY = row2Y + tableRowHeight + 0.1;
+
+  doc.setLineWidth(0.01);
+  doc.line(margin, currentY, margin + contentWidth, currentY);
+  currentY += 0.2;
+
+  const columnWidth = (contentWidth - 0.3) / 2;
+  const leftColumnX = margin;
+  const rightColumnX = margin + columnWidth + 0.3;
+  const colWidths = [0.8, 1.0, columnWidth - 0.8 - 1.0];
+  const headers = ['LOCATION', 'QTY', 'ITEM'];
+  const headerAlignments: Array<'left' | 'center' | 'right'> = ['center', 'center', 'left'];
+  
+  const renderColumnHeader = (x: number) => {
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(9);
+    let xPos = x;
+    for (let i = 0; i < headers.length; i++) {
+      const align = headerAlignments[i];
+      if (align === 'center') {
+        doc.text(headers[i], xPos + colWidths[i] / 2, currentY, { align: 'center' });
+      } else if (align === 'right') {
+        doc.text(headers[i], xPos + colWidths[i], currentY, { align: 'right' });
+      } else {
+        doc.text(headers[i], xPos, currentY, { align: 'left' });
+      }
+      xPos += colWidths[i];
+    }
+  };
+
+  doc.setFontSize(12);
+  doc.setFont('helvetica', 'bold');
+  doc.text('PERSONALIZED ITEMS', leftColumnX, currentY);
+  doc.text('NON-PERSONALIZED ITEMS', rightColumnX, currentY);
+  currentY += 0.25;
+
+  renderColumnHeader(leftColumnX);
+  renderColumnHeader(rightColumnX);
+  currentY += 0.15;
+  
+  doc.setLineWidth(0.01);
+  doc.line(leftColumnX, currentY, leftColumnX + columnWidth, currentY);
+  doc.line(rightColumnX, currentY, rightColumnX + columnWidth, currentY);
+  currentY += 0.15;
+
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(8);
+
+  for (const baseSku of sortedBaseSkus) {
+    const persItemsForSku = persByBaseSku.get(baseSku) || [];
+    const nonPersItemsForSku = nonPersByBaseSku.get(baseSku) || [];
+    const maxRowsForSku = Math.max(persItemsForSku.length, nonPersItemsForSku.length, 1);
+    
+    if (currentY + (maxRowsForSku * 0.2) + 0.1 > pageHeight - margin - 0.8) {
+      doc.addPage();
+      currentY = margin;
+      
+      doc.setFontSize(12);
+      doc.setFont('helvetica', 'bold');
+      doc.text('PERSONALIZED ITEMS', leftColumnX, currentY);
+      doc.text('NON-PERSONALIZED ITEMS', rightColumnX, currentY);
+      currentY += 0.25;
+      
+      renderColumnHeader(leftColumnX);
+      renderColumnHeader(rightColumnX);
+      currentY += 0.15;
+      
+      doc.setLineWidth(0.01);
+      doc.line(leftColumnX, currentY, leftColumnX + columnWidth, currentY);
+      doc.line(rightColumnX, currentY, rightColumnX + columnWidth, currentY);
+      currentY += 0.15;
+      
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(8);
+    }
+
+    const rowStartY = currentY;
+    
+    let persRowY = rowStartY;
+    for (const persItem of persItemsForSku) {
+      let xPos = leftColumnX;
+      doc.setFont('helvetica', 'bold');
+      doc.text(persItem.pickLocation, xPos + colWidths[0] / 2, persRowY + 0.1, { align: 'center' });
+      xPos += colWidths[0];
+      doc.text(persItem.totalQuantity.toString(), xPos + colWidths[1] / 2, persRowY + 0.1, { align: 'center' });
+      xPos += colWidths[1];
+      doc.text(persItem.sku, xPos, persRowY + 0.1);
+      persRowY += 0.2;
+    }
+    
+    let nonPersRowY = rowStartY;
+    for (const nonPersItem of nonPersItemsForSku) {
+      let xPos = rightColumnX;
+      doc.setFont('helvetica', 'bold');
+      doc.text(nonPersItem.pickLocation, xPos + colWidths[0] / 2, nonPersRowY + 0.1, { align: 'center' });
+      xPos += colWidths[0];
+      doc.text(nonPersItem.totalQuantity.toString(), xPos + colWidths[1] / 2, nonPersRowY + 0.1, { align: 'center' });
+      xPos += colWidths[1];
+      doc.text(nonPersItem.sku, xPos, nonPersRowY + 0.1);
+      nonPersRowY += 0.2;
+    }
+
+    currentY = rowStartY + (maxRowsForSku * 0.2);
+    
+    doc.setLineWidth(0.005);
+    doc.line(leftColumnX, currentY, leftColumnX + columnWidth, currentY);
+    doc.line(rightColumnX, currentY, rightColumnX + columnWidth, currentY);
+    currentY += 0.1;
+  }
+
+  // Add packing slips after picklist
+  doc.addPage();
+
+  const singlesOrders: ProcessedOrder[] = [];
+  const otherOrders: ProcessedOrder[] = [];
+  
+  for (const order of orders) {
+    if (order.boxSize === 'singles' || order.boxSize === '4pack') {
+      singlesOrders.push(order);
+    } else {
+      otherOrders.push(order);
+    }
+  }
+
+  let pageAdded = false;
+
+  if (singlesOrders.length > 0) {
+    for (let i = 0; i < singlesOrders.length; i += 2) {
+      if (pageAdded) {
+        doc.addPage();
+      }
+      pageAdded = true;
+
+      const order1 = singlesOrders[i];
+      if (!order1) {
+        console.error('Missing order1 at index', i);
+        continue;
+      }
+
+      const order2 = singlesOrders[i + 1];
+
+      if (order2) {
+        try {
+          await generateTwoSinglesPage(doc, order1, order2);
+        } catch (error) {
+          console.error('Error generating two singles page:', error);
+          throw error;
+        }
+      } else {
+        try {
+          await generatePackingSlipPage(doc, order1);
+        } catch (error) {
+          console.error('Error generating single packing slip page:', error);
+          throw error;
+        }
+      }
+    }
+  }
+
+  for (const order of otherOrders) {
+    if (pageAdded) {
+      doc.addPage();
+    }
+    pageAdded = true;
+    
+    try {
+      await generatePackingSlipPage(doc, order);
+    } catch (error) {
+      console.error('Error generating packing slip page:', error);
+      throw error;
+    }
+  }
+
+  const pdfBlob = doc.output('blob');
+  const pdfUrl = URL.createObjectURL(pdfBlob);
+  window.open(pdfUrl, '_blank');
+  setTimeout(() => URL.revokeObjectURL(pdfUrl), 100);
 }
