@@ -862,7 +862,7 @@ export default function Home() {
                           }`}>
                             {order.shippingZoneName || order.shippingZone}
                           </span>
-                          {order.shippingDistance !== null && (
+                          {order.shippingDistance !== null && order.shippingDistance !== undefined && (
                             <span className="text-xs text-gray-500 mt-1">
                               {Math.round(order.shippingDistance)} mi
                             </span>
