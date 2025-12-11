@@ -715,7 +715,7 @@ export default function Home() {
                 <label className="text-sm font-medium text-gray-700 whitespace-nowrap">
                   Select First:
                 </label>
-                <div className="flex-1 max-w-xs">
+                <div className="flex-1 min-w-[400px]">
                   <input
                     type="range"
                     min="0"
@@ -725,7 +725,7 @@ export default function Home() {
                     className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-blue-600"
                   />
                 </div>
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 whitespace-nowrap">
                   <span className="text-sm font-semibold text-gray-700 min-w-[3rem] text-right">
                     {selectFirstCount}
                   </span>
