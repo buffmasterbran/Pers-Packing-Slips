@@ -1,4 +1,5 @@
 import { NetSuiteItem, ProcessedOrder, OrderItem, OrderConfig } from './types';
+import { assignShippingZone } from './shippingZones';
 
 /**
  * Extract SKU prefix (first 5 chars) if it matches DPT## pattern
@@ -166,6 +167,9 @@ export function processOrders(items: NetSuiteItem[], orderConfig: OrderConfig): 
     // Match box size
     const boxSize = matchBoxSize(processedItems, orderConfig);
 
+    // Calculate shipping zone based on distance from Asheville
+    const zoneInfo = assignShippingZone(firstItem.values.shipaddress);
+
     processedOrders.push({
       tranid,
       orderNumber: firstItem.values['createdFrom.otherrefnum_1'] || firstItem.values['createdFrom.tranid'],
@@ -180,6 +184,9 @@ export function processOrders(items: NetSuiteItem[], orderConfig: OrderConfig): 
       memo: firstItem.values['createdFrom.memo'] || firstItem.values['createdFrom.custbodypir_sales_order_warehouse_note'],
       shipstationOrderId: firstItem.values.custbody_pir_shipstation_ordid,
       customArtworkUrl: firstItem.values['createdFrom.custbody_pir_mockup_url_sales_order'],
+      shippingZone: zoneInfo.zone,
+      shippingZoneName: zoneInfo.zoneName,
+      shippingDistance: zoneInfo.distance,
     });
   }
 
@@ -254,6 +261,7 @@ export function filterOrders(
     dateTo: Date | null;
     printedOnly: boolean | null; // null = show all, true = printed only, false = not printed only
     printedOrders: Set<string>; // Set of tranids that have been printed
+    shippingZones: string[]; // Selected shipping zones (empty = all zones)
   }
 ): ProcessedOrder[] {
   return orders.filter(order => {
@@ -330,6 +338,13 @@ export function filterOrders(
         return false;
       }
       if (!filters.printedOnly && isPrinted) {
+        return false;
+      }
+    }
+
+    // Shipping zone filter
+    if (filters.shippingZones.length > 0) {
+      if (!order.shippingZone || !filters.shippingZones.includes(order.shippingZone)) {
         return false;
       }
     }

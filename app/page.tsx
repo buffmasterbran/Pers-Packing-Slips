@@ -5,6 +5,7 @@ import { NetSuiteItem, ProcessedOrder, OrderConfig } from '@/lib/types';
 import { processOrders, filterOrders } from '@/lib/dataProcessing';
 import { getPrintedOrders, markOrdersAsPrinted, clearPrintedOrders } from '@/lib/storage';
 import { generatePackingSlipsPDF, generatePicklistPDF, generateCombinedPDF } from '@/lib/pdfGenerator';
+import { SHIPPING_ZONES, ShippingZoneId } from '@/lib/shippingZones';
 import orderConfig from '../order-config.json';
 
 export default function Home() {
@@ -20,10 +21,13 @@ export default function Home() {
   const [dateFrom, setDateFrom] = useState<string>('');
   const [dateTo, setDateTo] = useState<string>('');
   const [printedFilter, setPrintedFilter] = useState<boolean | null>(false); // Default to Not Printed
+  const [selectedShippingZones, setSelectedShippingZones] = useState<ShippingZoneId[]>([]);
   const [selectedOrder, setSelectedOrder] = useState<ProcessedOrder | null>(null);
   const [selectedOrderIds, setSelectedOrderIds] = useState<Set<string>>(new Set());
   const [showClearHint, setShowClearHint] = useState(false);
   const [syncing, setSyncing] = useState(false);
+  const [selectFirstCount, setSelectFirstCount] = useState<number>(0);
+  const [filtersCollapsed, setFiltersCollapsed] = useState<boolean>(false);
   
   // Sorting
   const [sortColumn, setSortColumn] = useState<'date' | 'cupSize' | 'orderNumber' | 'fulfillmentId' | null>(null);
@@ -84,6 +88,7 @@ export default function Home() {
       dateTo: dateTo ? new Date(dateTo) : null,
       printedOnly: printedFilter,
       printedOrders,
+      shippingZones: selectedShippingZones,
     });
 
     // Apply sorting if a sort column is selected
@@ -144,7 +149,7 @@ export default function Home() {
     }
 
     return orders;
-  }, [allOrders, personalizedFilter, selectedCupSizes, selectedBoxSize, dateFrom, dateTo, printedFilter, printedOrders, sortColumn, sortDirection]);
+  }, [allOrders, personalizedFilter, selectedCupSizes, selectedBoxSize, dateFrom, dateTo, printedFilter, printedOrders, selectedShippingZones, sortColumn, sortDirection]);
 
   // Total personalized cups across filtered orders
   const totalPersCups = useMemo(() => {
@@ -163,7 +168,8 @@ export default function Home() {
   // Clear selected orders when filters change (to avoid selecting orders that are no longer visible)
   useEffect(() => {
     setSelectedOrderIds(new Set());
-  }, [personalizedFilter, selectedCupSizes, selectedBoxSize, dateFrom, dateTo, printedFilter]);
+    setSelectFirstCount(0);
+  }, [personalizedFilter, selectedCupSizes, selectedBoxSize, dateFrom, dateTo, printedFilter, selectedShippingZones]);
 
   // Handle cup size toggle
   const toggleCupSize = (size: string) => {
@@ -185,6 +191,21 @@ export default function Home() {
     setSelectedBoxSize(boxSize);
   };
 
+  // Handle shipping zone toggle
+  const toggleShippingZone = (zoneId: ShippingZoneId | 'all') => {
+    if (zoneId === 'all') {
+      setSelectedShippingZones([]);
+    } else {
+      setSelectedShippingZones(prev => {
+        if (prev.includes(zoneId)) {
+          return prev.filter(z => z !== zoneId);
+        } else {
+          return [...prev, zoneId];
+        }
+      });
+    }
+  };
+
   // Handle print packing slips
   // Clear all printed orders (for development/testing)
   // You can call this from browser console: window.clearAllPrintedOrders()
@@ -200,6 +221,21 @@ export default function Home() {
   const selectedOrders = useMemo(() => {
     return filteredOrders.filter(order => selectedOrderIds.has(order.tranid));
   }, [filteredOrders, selectedOrderIds]);
+
+  // Total personalized cups across selected orders
+  const selectedPersCups = useMemo(() => {
+    if (selectedOrders.length === 0) return 0;
+    let total = 0;
+    for (const order of selectedOrders) {
+      for (const item of order.items) {
+        // Treat SKUs ending in "-PERS" as personalized cups
+        if (item.sku && item.sku.toUpperCase().endsWith('-PERS')) {
+          total += item.quantity;
+        }
+      }
+    }
+    return total;
+  }, [selectedOrders]);
 
   const handleToggleOrder = (tranid: string) => {
     setSelectedOrderIds(prev => {
@@ -226,6 +262,17 @@ export default function Home() {
   const handleSelectFirst = (count: number) => {
     const firstNOrders = filteredOrders.slice(0, count);
     setSelectedOrderIds(new Set(firstNOrders.map(o => o.tranid)));
+  };
+
+  // Handle slider change and apply selection
+  const handleSliderChange = (value: number) => {
+    setSelectFirstCount(value);
+    if (value === 0) {
+      setSelectedOrderIds(new Set());
+    } else {
+      const firstNOrders = filteredOrders.slice(0, value);
+      setSelectedOrderIds(new Set(firstNOrders.map(o => o.tranid)));
+    }
   };
 
   // Handle column sorting
@@ -398,28 +445,43 @@ export default function Home() {
   return (
     <div className="min-h-screen bg-gray-50 p-6">
       <div className="max-w-7xl mx-auto">
-        <div className="flex items-center justify-between mb-6 gap-4">
-          <h1 className="text-3xl font-bold text-gray-900">
-            Packing Slips - Personalized Orders
-          </h1>
-          <button
-            onClick={loadData}
-            disabled={syncing}
-            className={`inline-flex items-center px-4 py-2 rounded-md text-sm font-medium ${
-              syncing
-                ? 'bg-gray-300 text-gray-600 cursor-not-allowed'
-                : 'bg-blue-600 text-white hover:bg-blue-700'
-            }`}
-          >
-            {syncing ? 'Syncing…' : 'Sync Orders'}
-          </button>
-        </div>
-
         {/* Filters Section */}
         <div className="bg-white rounded-lg shadow-md p-6 mb-6">
-          <h2 className="text-xl font-semibold mb-4">Filters</h2>
+          <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center gap-3">
+              <h2 className="text-xl font-semibold">Filters</h2>
+              <button
+                onClick={() => setFiltersCollapsed(!filtersCollapsed)}
+                className="text-gray-500 hover:text-gray-700 transition-colors"
+                title={filtersCollapsed ? 'Expand filters' : 'Collapse filters'}
+              >
+                {filtersCollapsed ? (
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                  </svg>
+                ) : (
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 15l7-7 7 7" />
+                  </svg>
+                )}
+              </button>
+            </div>
+            <button
+              onClick={loadData}
+              disabled={syncing}
+              className={`inline-flex items-center px-4 py-2 rounded-md text-sm font-medium ${
+                syncing
+                  ? 'bg-gray-300 text-gray-600 cursor-not-allowed'
+                  : 'bg-blue-600 text-white hover:bg-blue-700'
+              }`}
+            >
+              {syncing ? 'Syncing…' : 'Sync Orders'}
+            </button>
+          </div>
           
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+          {!filtersCollapsed && (
+            <>
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
             {/* Personalized Filter */}
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">
@@ -496,10 +558,10 @@ export default function Home() {
               <label className="block text-sm font-medium text-gray-700 mb-2">
                 Box Size
               </label>
-              <div className="flex flex-wrap gap-2">
+              <div className="flex gap-2">
                 <button
                   onClick={() => handleBoxSizeChange(null)}
-                  className={`px-4 py-2 rounded ${
+                  className={`px-3 py-1.5 text-sm rounded whitespace-nowrap ${
                     selectedBoxSize === null
                       ? 'bg-blue-600 text-white'
                       : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
@@ -511,7 +573,7 @@ export default function Home() {
                   <button
                     key={box.key}
                     onClick={() => handleBoxSizeChange(box.key)}
-                    className={`px-4 py-2 rounded ${
+                    className={`px-3 py-1.5 text-sm rounded whitespace-nowrap ${
                       selectedBoxSize === box.key
                         ? 'bg-blue-600 text-white'
                         : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
@@ -595,7 +657,43 @@ export default function Home() {
                 </button>
               </div>
             </div>
+
           </div>
+
+          {/* Shipping Zone Filter - Full Width */}
+          <div className="mt-6">
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              Shipping Zone (from Asheville, NC)
+            </label>
+            <div className="flex gap-2 w-full">
+              <button
+                onClick={() => toggleShippingZone('all')}
+                className={`flex-1 px-4 py-2 rounded text-sm ${
+                  selectedShippingZones.length === 0
+                    ? 'bg-blue-600 text-white'
+                    : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                }`}
+              >
+                All Zones
+              </button>
+              {SHIPPING_ZONES.map(zone => (
+                <button
+                  key={zone.id}
+                  onClick={() => toggleShippingZone(zone.id)}
+                  className={`flex-1 px-4 py-2 rounded text-sm ${
+                    selectedShippingZones.includes(zone.id)
+                      ? 'bg-blue-600 text-white'
+                      : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                  }`}
+                  title={`Priority ${zone.priority} - Ship ${zone.priority === 1 ? 'soonest' : zone.priority === 2 ? 'soon' : zone.priority === 3 ? 'normal' : 'standard'}`}
+                >
+                  {zone.name}
+                </button>
+              ))}
+            </div>
+          </div>
+            </>
+          )}
         </div>
 
         {/* Results Summary, Total Pers Count, and Print Buttons */}
@@ -607,48 +705,56 @@ export default function Home() {
             <span className="block text-sm font-semibold text-indigo-700">
               TOTAL PERS CUPS COUNT: {totalPersCups}
             </span>
+            {selectedOrders.length > 0 && (
+              <span className="block text-sm font-semibold text-blue-700">
+                SELECTED ORDERS PERS CUPS COUNT: {selectedPersCups}
+              </span>
+            )}
             {filteredOrders.length > 0 && (
-              <div className="flex flex-wrap gap-2 mt-1">
-                <button
-                  onClick={() => handleSelectFirst(10)}
-                  className="px-3 py-1 text-sm bg-gray-100 text-gray-700 rounded hover:bg-gray-200 border border-gray-300"
-                >
-                  Select First 10
-                </button>
-                <button
-                  onClick={() => handleSelectFirst(20)}
-                  className="px-3 py-1 text-sm bg-gray-100 text-gray-700 rounded hover:bg-gray-200 border border-gray-300"
-                >
-                  Select First 20
-                </button>
-                <button
-                  onClick={() => handleSelectFirst(30)}
-                  className="px-3 py-1 text-sm bg-gray-100 text-gray-700 rounded hover:bg-gray-200 border border-gray-300"
-                >
-                  Select First 30
-                </button>
+              <div className="flex items-center gap-3 mt-2">
+                <label className="text-sm font-medium text-gray-700 whitespace-nowrap">
+                  Select First:
+                </label>
+                <div className="flex-1 max-w-xs">
+                  <input
+                    type="range"
+                    min="0"
+                    max={Math.min(30, filteredOrders.length)}
+                    value={selectFirstCount}
+                    onChange={(e) => handleSliderChange(parseInt(e.target.value))}
+                    className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-blue-600"
+                  />
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-sm font-semibold text-gray-700 min-w-[3rem] text-right">
+                    {selectFirstCount}
+                  </span>
+                  <span className="text-sm text-gray-500">
+                    / {Math.min(30, filteredOrders.length)}
+                  </span>
+                </div>
               </div>
             )}
           </div>
-          <div className="flex gap-3">
+          <div className="flex gap-2">
             <button
               onClick={handleGeneratePicklist}
               disabled={filteredOrders.length === 0}
-              className="px-6 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed"
+              className="px-3 py-1.5 text-sm bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed"
             >
               Generate Picklist ({selectedOrders.length > 0 ? selectedOrders.length : filteredOrders.length})
             </button>
             <button
               onClick={handlePrintPackingSlips}
               disabled={filteredOrders.length === 0}
-              className="px-6 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 disabled:bg-gray-400 disabled:cursor-not-allowed"
+              className="px-3 py-1.5 text-sm bg-green-600 text-white rounded-md hover:bg-green-700 disabled:bg-gray-400 disabled:cursor-not-allowed"
             >
               Print Packing Slips ({selectedOrders.length > 0 ? selectedOrders.length : filteredOrders.length})
             </button>
             <button
               onClick={handlePrintPicklistAndPackingSlips}
               disabled={filteredOrders.length === 0}
-              className="px-6 py-2 bg-purple-600 text-white rounded-md hover:bg-purple-700 disabled:bg-gray-400 disabled:cursor-not-allowed"
+              className="px-3 py-1.5 text-sm bg-purple-600 text-white rounded-md hover:bg-purple-700 disabled:bg-gray-400 disabled:cursor-not-allowed"
             >
               Print Picklist and Packing Slips ({selectedOrders.length > 0 ? selectedOrders.length : filteredOrders.length})
             </button>
@@ -697,6 +803,9 @@ export default function Home() {
                     </div>
                   </th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Shipping Zone
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                     Personalized
                   </th>
                   <th 
@@ -741,6 +850,27 @@ export default function Home() {
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                       {order.datecreated}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm">
+                      {order.shippingZone ? (
+                        <div className="flex flex-col">
+                          <span className={`px-2 py-1 text-xs font-semibold rounded ${
+                            order.shippingZone === 'distant' ? 'bg-red-100 text-red-800' :
+                            order.shippingZone === 'national' ? 'bg-orange-100 text-orange-800' :
+                            order.shippingZone === 'regional' ? 'bg-yellow-100 text-yellow-800' :
+                            'bg-blue-100 text-blue-800'
+                          }`}>
+                            {order.shippingZoneName || order.shippingZone}
+                          </span>
+                          {order.shippingDistance !== null && (
+                            <span className="text-xs text-gray-500 mt-1">
+                              {Math.round(order.shippingDistance)} mi
+                            </span>
+                          )}
+                        </div>
+                      ) : (
+                        <span className="text-xs text-gray-400">Unknown</span>
+                      )}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm">
                       {order.personalized ? (

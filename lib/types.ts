@@ -58,6 +58,9 @@ export interface ProcessedOrder {
   memo?: string;
   shipstationOrderId?: string;
   customArtworkUrl?: string; // custbody_pir_mockup_url_sales_order
+  shippingZone?: string; // Shipping zone ID (local, regional, national, distant)
+  shippingZoneName?: string; // Human-readable zone name
+  shippingDistance?: number | null; // Distance from Asheville in miles
 }
 
 export interface BoxSizeConfig {
