@@ -763,7 +763,15 @@ export async function generatePicklistPDF(orders: ProcessedOrder[]): Promise<voi
   doc.setFont('helvetica', 'bold');
   doc.text(`Personalized Cups: ${totalPersonalizedCups}`, tableStartX + tableColWidth, row2Y);
   
-  currentY = row2Y + tableRowHeight + 0.1;
+  // Row 3, Col 1: Completed By
+  const row3Y = row2Y + tableRowHeight;
+  doc.setFont('helvetica', 'normal');
+  doc.text('Completed By: _________________', tableStartX, row3Y);
+  
+  // Row 3, Col 2: Completed Date
+  doc.text('Completed Date: _________________', tableStartX + tableColWidth, row3Y);
+  
+  currentY = row3Y + tableRowHeight + 0.1;
 
   // Draw header line under title block
   doc.setLineWidth(0.01);
@@ -1084,7 +1092,15 @@ export async function generateCombinedPDF(orders: ProcessedOrder[]): Promise<voi
   doc.setFont('helvetica', 'bold');
   doc.text(`Personalized Cups: ${totalPersonalizedCups}`, tableStartX + tableColWidth, row2Y);
   
-  currentY = row2Y + tableRowHeight + 0.1;
+  // Row 3, Col 1: Completed By
+  const row3Y = row2Y + tableRowHeight;
+  doc.setFont('helvetica', 'normal');
+  doc.text('Completed By: _________________', tableStartX, row3Y);
+  
+  // Row 3, Col 2: Completed Date
+  doc.text('Completed Date: _________________', tableStartX + tableColWidth, row3Y);
+  
+  currentY = row3Y + tableRowHeight + 0.1;
 
   doc.setLineWidth(0.01);
   doc.line(margin, currentY, margin + contentWidth, currentY);

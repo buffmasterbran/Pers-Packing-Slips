@@ -167,13 +167,13 @@ export function processOrders(items: NetSuiteItem[], orderConfig: OrderConfig): 
     // Match box size
     const boxSize = matchBoxSize(processedItems, orderConfig);
 
-    // Calculate shipping zone based on distance from Asheville
+    // Calculate shipping zone based on zip code lookup
     const zoneInfo = assignShippingZone(firstItem.values.shipaddress);
 
     processedOrders.push({
       tranid,
       orderNumber: firstItem.values['createdFrom.otherrefnum_1'] || firstItem.values['createdFrom.tranid'],
-      datecreated: firstItem.values.datecreated,
+      datecreated: firstItem.values['createdFrom.custbody_pir_shop_order_date'] || firstItem.values.datecreated,
       shipaddress: firstItem.values.shipaddress,
       personalized,
       items: processedItems,
@@ -184,9 +184,9 @@ export function processOrders(items: NetSuiteItem[], orderConfig: OrderConfig): 
       memo: firstItem.values['createdFrom.memo'] || firstItem.values['createdFrom.custbodypir_sales_order_warehouse_note'],
       shipstationOrderId: firstItem.values.custbody_pir_shipstation_ordid,
       customArtworkUrl: firstItem.values['createdFrom.custbody_pir_mockup_url_sales_order'],
-      shippingZone: zoneInfo.zone,
+      shippingZone: zoneInfo.zone || undefined,
       shippingZoneName: zoneInfo.zoneName,
-      shippingDistance: zoneInfo.distance,
+      zipCode: zoneInfo.zipCode,
     });
   }
 
@@ -302,30 +302,37 @@ export function filterOrders(
       const orderDate = parseDate(order.datecreated);
       if (!orderDate) return false;
       
-      // Normalize all dates to start of day (00:00:00) for comparison
-      // This ensures we're comparing just the date part, not the time
-      const normalizeDate = (date: Date): Date => {
+      // Normalize dates to start of day (00:00:00) for comparison
+      const normalizeToStartOfDay = (date: Date): Date => {
         const normalized = new Date(date);
         normalized.setHours(0, 0, 0, 0);
         normalized.setMilliseconds(0);
         return normalized;
       };
       
-      const orderDateOnly = normalizeDate(orderDate);
+      // Normalize dateTo to end of day (23:59:59.999) so orders on that date are included
+      const normalizeToEndOfDay = (date: Date): Date => {
+        const normalized = new Date(date);
+        normalized.setHours(23, 59, 59, 999);
+        return normalized;
+      };
+      
+      const orderDateStart = normalizeToStartOfDay(orderDate);
       
       if (filters.dateFrom) {
-        const dateFromOnly = normalizeDate(filters.dateFrom);
+        const dateFromStart = normalizeToStartOfDay(filters.dateFrom);
         // Include orders on or after dateFrom (>=)
         // Using < means exclude if order is BEFORE dateFrom, which is correct
-        if (orderDateOnly < dateFromOnly) {
+        if (orderDateStart < dateFromStart) {
           return false;
         }
       }
       if (filters.dateTo) {
-        const dateToOnly = normalizeDate(filters.dateTo);
+        const dateToStart = normalizeToStartOfDay(filters.dateTo);
         // Include orders on or before dateTo (<=)
-        // Using > means exclude if order is AFTER dateTo, which is correct
-        if (orderDateOnly > dateToOnly) {
+        // Compare normalized start-of-day dates: orderDateStart <= dateToStart
+        // This means we exclude if orderDateStart > dateToStart
+        if (orderDateStart.getTime() > dateToStart.getTime()) {
           return false;
         }
       }
@@ -344,7 +351,18 @@ export function filterOrders(
 
     // Shipping zone filter
     if (filters.shippingZones.length > 0) {
-      if (!order.shippingZone || !filters.shippingZones.includes(order.shippingZone)) {
+      // Check if order has unknown zone (null/undefined) and if "unknown" is selected
+      const isUnknownZone = !order.shippingZone;
+      const hasUnknownSelected = filters.shippingZones.includes('unknown');
+      
+      // If order is unknown and unknown is selected, include it
+      if (isUnknownZone && hasUnknownSelected) {
+        // Continue to next filter check
+      } else if (isUnknownZone) {
+        // Order is unknown but unknown is not selected, exclude it
+        return false;
+      } else if (order.shippingZone && !filters.shippingZones.includes(order.shippingZone)) {
+        // Order has a zone but it's not in the selected zones, exclude it
         return false;
       }
     }
@@ -354,30 +372,35 @@ export function filterOrders(
 }
 
 /**
- * Parse date string from NetSuite format (e.g., "10/08/2025 8:53 am")
+ * Parse date string from NetSuite format (e.g., "10/08/2025 8:53 am" or "10/08/2025")
  */
 function parseDate(dateStr: string): Date | null {
   try {
-    // NetSuite format: "MM/DD/YYYY HH:MM am/pm"
+    // Handle both formats: "MM/DD/YYYY HH:MM am/pm" or "MM/DD/YYYY"
     const parts = dateStr.split(' ');
-    if (parts.length < 2) return null;
-    
     const datePart = parts[0]; // "MM/DD/YYYY"
-    const timePart = parts.slice(1).join(' '); // "HH:MM am/pm"
     
     const [month, day, year] = datePart.split('/').map(Number);
-    const timeMatch = timePart.match(/(\d+):(\d+)\s*(am|pm)/i);
     
-    if (!timeMatch) return null;
+    // If there's a time part, parse it
+    if (parts.length >= 2) {
+      const timePart = parts.slice(1).join(' '); // "HH:MM am/pm"
+      const timeMatch = timePart.match(/(\d+):(\d+)\s*(am|pm)/i);
+      
+      if (timeMatch) {
+        let hours = parseInt(timeMatch[1]);
+        const minutes = parseInt(timeMatch[2]);
+        const ampm = timeMatch[3].toLowerCase();
+        
+        if (ampm === 'pm' && hours !== 12) hours += 12;
+        if (ampm === 'am' && hours === 12) hours = 0;
+        
+        return new Date(year, month - 1, day, hours, minutes);
+      }
+    }
     
-    let hours = parseInt(timeMatch[1]);
-    const minutes = parseInt(timeMatch[2]);
-    const ampm = timeMatch[3].toLowerCase();
-    
-    if (ampm === 'pm' && hours !== 12) hours += 12;
-    if (ampm === 'am' && hours === 12) hours = 0;
-    
-    return new Date(year, month - 1, day, hours, minutes);
+    // Date-only format, set to start of day
+    return new Date(year, month - 1, day, 0, 0);
   } catch {
     return null;
   }

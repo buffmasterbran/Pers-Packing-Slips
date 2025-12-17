@@ -58,9 +58,9 @@ export interface ProcessedOrder {
   memo?: string;
   shipstationOrderId?: string;
   customArtworkUrl?: string; // custbody_pir_mockup_url_sales_order
-  shippingZone?: string; // Shipping zone ID (local, regional, national, distant)
-  shippingZoneName?: string; // Human-readable zone name
-  shippingDistance?: number | null; // Distance from Asheville in miles
+  shippingZone?: string; // Shipping zone number (e.g., "002", "003", "004", "005", etc.)
+  shippingZoneName?: string; // Human-readable zone name (e.g., "Zone 005")
+  zipCode?: string; // Zip code used for zone lookup
 }
 
 export interface BoxSizeConfig {

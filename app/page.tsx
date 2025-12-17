@@ -5,7 +5,7 @@ import { NetSuiteItem, ProcessedOrder, OrderConfig } from '@/lib/types';
 import { processOrders, filterOrders } from '@/lib/dataProcessing';
 import { getPrintedOrders, markOrdersAsPrinted, clearPrintedOrders } from '@/lib/storage';
 import { generatePackingSlipsPDF, generatePicklistPDF, generateCombinedPDF } from '@/lib/pdfGenerator';
-import { SHIPPING_ZONES, ShippingZoneId } from '@/lib/shippingZones';
+import { SHIPPING_ZONES, ShippingZoneId, UNKNOWN_ZONE_ID } from '@/lib/shippingZones';
 import orderConfig from '../order-config.json';
 
 export default function Home() {
@@ -29,8 +29,8 @@ export default function Home() {
   const [selectFirstCount, setSelectFirstCount] = useState<number>(0);
   const [filtersCollapsed, setFiltersCollapsed] = useState<boolean>(false);
   
-  // Sorting
-  const [sortColumn, setSortColumn] = useState<'date' | 'cupSize' | 'orderNumber' | 'fulfillmentId' | null>(null);
+  // Sorting - default to sorting by zone (closest first)
+  const [sortColumn, setSortColumn] = useState<'date' | 'cupSize' | 'orderNumber' | 'fulfillmentId' | 'zone' | null>('zone');
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');
 
   // Load data (initial + manual sync)
@@ -80,12 +80,18 @@ export default function Home() {
 
   // Filter orders
   const filteredOrders = useMemo(() => {
+    // Parse date strings from HTML date input (YYYY-MM-DD) as local dates, not UTC
+    const parseLocalDate = (dateStr: string): Date => {
+      const [year, month, day] = dateStr.split('-').map(Number);
+      return new Date(year, month - 1, day); // month is 0-indexed
+    };
+    
     let orders = filterOrders(allOrders, {
       personalized: personalizedFilter,
       cupSizes: selectedCupSizes,
       boxSize: selectedBoxSize,
-      dateFrom: dateFrom ? new Date(dateFrom) : null,
-      dateTo: dateTo ? new Date(dateTo) : null,
+      dateFrom: dateFrom ? parseLocalDate(dateFrom) : null,
+      dateTo: dateTo ? parseLocalDate(dateTo) : null,
       printedOnly: printedFilter,
       printedOrders,
       shippingZones: selectedShippingZones,
@@ -102,12 +108,30 @@ export default function Home() {
             // Parse dates for comparison
             const parseDate = (dateStr: string): Date | null => {
               try {
-                // Handle MM/DD/YYYY format
+                // Handle MM/DD/YYYY format (with or without time)
                 if (dateStr.includes('/')) {
                   const parts = dateStr.split(' ');
                   const datePart = parts[0];
                   const [month, day, year] = datePart.split('/').map(Number);
-                  return new Date(year, month - 1, day);
+                  
+                  // If there's a time part, parse it
+                  if (parts.length >= 2) {
+                    const timePart = parts.slice(1).join(' ');
+                    const timeMatch = timePart.match(/(\d+):(\d+)\s*(am|pm)/i);
+                    if (timeMatch) {
+                      let hours = parseInt(timeMatch[1]);
+                      const minutes = parseInt(timeMatch[2]);
+                      const ampm = timeMatch[3].toLowerCase();
+                      
+                      if (ampm === 'pm' && hours !== 12) hours += 12;
+                      if (ampm === 'am' && hours === 12) hours = 0;
+                      
+                      return new Date(year, month - 1, day, hours, minutes);
+                    }
+                  }
+                  
+                  // Date-only format
+                  return new Date(year, month - 1, day, 0, 0);
                 }
                 return new Date(dateStr);
               } catch {
@@ -136,6 +160,13 @@ export default function Home() {
             aValue = a.tranid || '';
             bValue = b.tranid || '';
             return aValue.localeCompare(bValue);
+          
+          case 'zone':
+            // Sort by zone number (lower = closer, higher = further)
+            // Parse zone numbers, treating null/undefined as high number
+            const zoneA = a.shippingZone ? parseInt(a.shippingZone) : 999;
+            const zoneB = b.shippingZone ? parseInt(b.shippingZone) : 999;
+            return zoneA - zoneB; // Lower numbers first (closest)
           
           default:
             return 0;
@@ -276,7 +307,7 @@ export default function Home() {
   };
 
   // Handle column sorting
-  const handleSort = (column: 'date' | 'cupSize' | 'orderNumber' | 'fulfillmentId') => {
+  const handleSort = (column: 'date' | 'cupSize' | 'orderNumber' | 'fulfillmentId' | 'zone') => {
     if (sortColumn === column) {
       // Toggle direction if clicking the same column
       setSortDirection(sortDirection === 'asc' ? 'desc' : 'asc');
@@ -288,7 +319,7 @@ export default function Home() {
   };
 
   // Render sort indicator
-  const renderSortIndicator = (column: 'date' | 'cupSize' | 'orderNumber' | 'fulfillmentId') => {
+  const renderSortIndicator = (column: 'date' | 'cupSize' | 'orderNumber' | 'fulfillmentId' | 'zone') => {
     if (sortColumn !== column) {
       return (
         <span className="ml-1 text-gray-400">
@@ -663,12 +694,12 @@ export default function Home() {
           {/* Shipping Zone Filter - Full Width */}
           <div className="mt-6">
             <label className="block text-sm font-medium text-gray-700 mb-2">
-              Shipping Zone (from Asheville, NC)
+              Shipping Zone
             </label>
-            <div className="flex gap-2 w-full">
+            <div className="flex flex-wrap gap-2">
               <button
                 onClick={() => toggleShippingZone('all')}
-                className={`flex-1 px-4 py-2 rounded text-sm ${
+                className={`px-4 py-2 rounded text-sm ${
                   selectedShippingZones.length === 0
                     ? 'bg-blue-600 text-white'
                     : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
@@ -680,16 +711,27 @@ export default function Home() {
                 <button
                   key={zone.id}
                   onClick={() => toggleShippingZone(zone.id)}
-                  className={`flex-1 px-4 py-2 rounded text-sm ${
+                  className={`px-4 py-2 rounded text-sm ${
                     selectedShippingZones.includes(zone.id)
                       ? 'bg-blue-600 text-white'
                       : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
                   }`}
-                  title={`Priority ${zone.priority} - Ship ${zone.priority === 1 ? 'soonest' : zone.priority === 2 ? 'soon' : zone.priority === 3 ? 'normal' : 'standard'}`}
+                  title={`Zone ${zone.id} - Higher zones ship sooner`}
                 >
                   {zone.name}
                 </button>
               ))}
+              <button
+                onClick={() => toggleShippingZone(UNKNOWN_ZONE_ID)}
+                className={`px-4 py-2 rounded text-sm ${
+                  selectedShippingZones.includes(UNKNOWN_ZONE_ID)
+                    ? 'bg-blue-600 text-white'
+                    : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                }`}
+                title="Orders with unknown shipping zones"
+              >
+                Unknown
+              </button>
             </div>
           </div>
             </>
@@ -802,8 +844,14 @@ export default function Home() {
                       {renderSortIndicator('date')}
                     </div>
                   </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Shipping Zone
+                  <th 
+                    className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100 select-none"
+                    onClick={() => handleSort('zone')}
+                  >
+                    <div className="flex items-center">
+                      Shipping Zone
+                      {renderSortIndicator('zone')}
+                    </div>
                   </th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                     Personalized
@@ -855,16 +903,16 @@ export default function Home() {
                       {order.shippingZone ? (
                         <div className="flex flex-col">
                           <span className={`px-2 py-1 text-xs font-semibold rounded ${
-                            order.shippingZone === 'distant' ? 'bg-red-100 text-red-800' :
-                            order.shippingZone === 'national' ? 'bg-orange-100 text-orange-800' :
-                            order.shippingZone === 'regional' ? 'bg-yellow-100 text-yellow-800' :
+                            parseInt(order.shippingZone) >= 8 ? 'bg-red-100 text-red-800' :
+                            parseInt(order.shippingZone) >= 6 ? 'bg-orange-100 text-orange-800' :
+                            parseInt(order.shippingZone) >= 4 ? 'bg-yellow-100 text-yellow-800' :
                             'bg-blue-100 text-blue-800'
                           }`}>
-                            {order.shippingZoneName || order.shippingZone}
+                            {order.shippingZoneName || `Zone ${order.shippingZone}`}
                           </span>
-                          {order.shippingDistance !== null && order.shippingDistance !== undefined && (
+                          {order.zipCode && (
                             <span className="text-xs text-gray-500 mt-1">
-                              {Math.round(order.shippingDistance)} mi
+                              {order.zipCode}
                             </span>
                           )}
                         </div>
