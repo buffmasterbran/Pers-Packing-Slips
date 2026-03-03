@@ -3,19 +3,53 @@ import { Pool } from 'pg';
 // Create a connection pool (reused across requests)
 let pool: Pool | null = null;
 
+function buildDatabaseUrlFromParts(): string | null {
+  const host = process.env.POSTGRES_HOST;
+  const port = process.env.POSTGRES_PORT || '5432';
+  const user = process.env.POSTGRES_USER;
+  const password = process.env.POSTGRES_PASSWORD;
+  const database = process.env.POSTGRES_DB;
+
+  if (!host || !user || !password || !database) {
+    return null;
+  }
+
+  return `postgresql://${encodeURIComponent(user)}:${encodeURIComponent(password)}@${host}:${port}/${database}`;
+}
+
+function resolveSslConfig(connectionString: string) {
+  const sslMode = process.env.DB_SSL_MODE?.toLowerCase();
+
+  // Explicit override via env var:
+  // - disable: no SSL
+  // - require: SSL with cert validation
+  // - no-verify: SSL without cert validation
+  if (sslMode === 'disable') return undefined;
+  if (sslMode === 'require') return { rejectUnauthorized: true };
+  if (sslMode === 'no-verify') return { rejectUnauthorized: false };
+
+  // Backward compatibility: preserve SSL behavior when URL requests SSL.
+  if (connectionString.includes('sslmode=require') || connectionString.includes('ssl=true')) {
+    return { rejectUnauthorized: false };
+  }
+
+  // Default for private/internal database networks (e.g., Coolify service network)
+  return undefined;
+}
+
 function getPool(): Pool {
   if (!pool) {
     // Check multiple possible environment variable names
-    // Supabase/Vercel might use different names
     const connectionString = 
-      process.env.POSTGRES_URL || 
       process.env.DATABASE_URL || 
+      process.env.POSTGRES_URL || 
       process.env.SUPABASE_DATABASE_URL ||
       process.env.POSTGRES_PRISMA_URL ||
-      process.env.POSTGRES_URL_NON_POOLING;
+      process.env.POSTGRES_URL_NON_POOLING ||
+      buildDatabaseUrlFromParts();
     
     if (!connectionString) {
-      const error = 'Missing database connection string. Checked: POSTGRES_URL, DATABASE_URL, SUPABASE_DATABASE_URL, POSTGRES_PRISMA_URL, POSTGRES_URL_NON_POOLING';
+      const error = 'Missing database connection. Checked: DATABASE_URL, POSTGRES_URL, SUPABASE_DATABASE_URL, POSTGRES_PRISMA_URL, POSTGRES_URL_NON_POOLING, or POSTGRES_HOST/PORT/USER/PASSWORD/DB.';
       console.error(error);
       throw new Error(error);
     }
@@ -34,14 +68,11 @@ function getPool(): Pool {
     const url = new URL(baseConnectionString);
     url.searchParams.delete('sslmode');
     const finalConnectionString = url.toString();
+    const ssl = resolveSslConfig(baseConnectionString);
     
     pool = new Pool({
       connectionString: finalConnectionString,
-      // SSL configuration - Supabase requires SSL
-      // Explicitly configure SSL to accept self-signed certificates
-      ssl: {
-        rejectUnauthorized: false, // Accept Supabase's SSL certificate (self-signed)
-      },
+      ssl,
       // Connection pool settings for serverless
       max: 1, // Limit connections for serverless
       idleTimeoutMillis: 30000,

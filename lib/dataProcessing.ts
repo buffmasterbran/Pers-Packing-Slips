@@ -170,10 +170,14 @@ export function processOrders(items: NetSuiteItem[], orderConfig: OrderConfig): 
     // Calculate shipping zone based on zip code lookup
     const zoneInfo = assignShippingZone(firstItem.values.shipaddress);
 
+    // Store shop order date (preferred) or fallback to fulfillment date
+    const shopOrderDate = firstItem.values['createdFrom.custbody_pir_shop_order_date'];
+    const fulfillmentDate = firstItem.values.datecreated || '';
+    
     processedOrders.push({
       tranid,
       orderNumber: firstItem.values['createdFrom.otherrefnum_1'] || firstItem.values['createdFrom.tranid'],
-      datecreated: firstItem.values['createdFrom.custbody_pir_shop_order_date'] || firstItem.values.datecreated,
+      datecreated: shopOrderDate || fulfillmentDate || '',
       shipaddress: firstItem.values.shipaddress,
       personalized,
       items: processedItems,
@@ -254,6 +258,7 @@ function arraysMatch(arr1: string[], arr2: string[]): boolean {
 export function filterOrders(
   orders: ProcessedOrder[],
   filters: {
+    searchQuery?: string; // Search in order number and fulfillment ID
     personalized: boolean | null; // null = show all
     cupSizes: string[]; // Selected cup sizes (empty = all sizes)
     boxSize: string | null; // Selected box size (null = all sizes)
@@ -265,6 +270,15 @@ export function filterOrders(
   }
 ): ProcessedOrder[] {
   return orders.filter(order => {
+    // Search filter - search in order number and fulfillment ID
+    if (filters.searchQuery && filters.searchQuery.trim()) {
+      const query = filters.searchQuery.trim().toLowerCase();
+      const orderNumberMatch = order.orderNumber?.toLowerCase().includes(query);
+      const fulfillmentIdMatch = order.tranid?.toLowerCase().includes(query);
+      if (!orderNumberMatch && !fulfillmentIdMatch) {
+        return false;
+      }
+    }
     // Personalized filter
     if (filters.personalized !== null) {
       if (order.personalized !== filters.personalized) {

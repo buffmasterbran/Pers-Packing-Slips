@@ -15,6 +15,7 @@ export default function Home() {
   const [error, setError] = useState<string | null>(null);
   
   // Filters
+  const [searchQuery, setSearchQuery] = useState<string>('');
   const [personalizedFilter, setPersonalizedFilter] = useState<boolean | null>(true); // Default to Personalized
   const [selectedCupSizes, setSelectedCupSizes] = useState<string[]>([]);
   const [selectedBoxSize, setSelectedBoxSize] = useState<string | null>(null);
@@ -87,6 +88,7 @@ export default function Home() {
     };
     
     let orders = filterOrders(allOrders, {
+      searchQuery,
       personalized: personalizedFilter,
       cupSizes: selectedCupSizes,
       boxSize: selectedBoxSize,
@@ -180,7 +182,7 @@ export default function Home() {
     }
 
     return orders;
-  }, [allOrders, personalizedFilter, selectedCupSizes, selectedBoxSize, dateFrom, dateTo, printedFilter, printedOrders, selectedShippingZones, sortColumn, sortDirection]);
+  }, [allOrders, searchQuery, personalizedFilter, selectedCupSizes, selectedBoxSize, dateFrom, dateTo, printedFilter, printedOrders, selectedShippingZones, sortColumn, sortDirection]);
 
   // Total personalized cups across filtered orders
   const totalPersCups = useMemo(() => {
@@ -200,7 +202,7 @@ export default function Home() {
   useEffect(() => {
     setSelectedOrderIds(new Set());
     setSelectFirstCount(0);
-  }, [personalizedFilter, selectedCupSizes, selectedBoxSize, dateFrom, dateTo, printedFilter, selectedShippingZones]);
+  }, [searchQuery, personalizedFilter, selectedCupSizes, selectedBoxSize, dateFrom, dateTo, printedFilter, selectedShippingZones]);
 
   // Handle cup size toggle
   const toggleCupSize = (size: string) => {
@@ -508,6 +510,20 @@ export default function Home() {
             >
               {syncing ? 'Syncing…' : 'Sync Orders'}
             </button>
+          </div>
+          
+          {/* Search Bar */}
+          <div className="mb-4">
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              Search Orders
+            </label>
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Search by Order # or Fulfillment ID..."
+              className="w-full px-4 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
           </div>
           
           {!filtersCollapsed && (

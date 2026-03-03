@@ -47,7 +47,7 @@ export interface OrderItem {
 export interface ProcessedOrder {
   tranid: string;
   orderNumber: string; // createdFrom.otherrefnum_1 (Shopify order #) or createdFrom.tranid (fallback)
-  datecreated: string;
+  datecreated: string; // Shop order date (createdFrom.custbody_pir_shop_order_date) or fulfillment date (fallback)
   shipaddress: string;
   personalized: boolean;
   items: OrderItem[];
